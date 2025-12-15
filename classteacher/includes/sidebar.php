@@ -17,7 +17,11 @@
         </li>
 
         <li class="menu-header">MY CLASS (Home Room)</li>
-
+        <li>
+            <a href="my_class.php" class="<?php echo $current_page == 'my_class.php' ? 'active' : ''; ?>">
+                <i class="fas fa-user-graduate"></i> <span>Class</span>
+            </a>
+        </li>
         <li>
             <a href="my_class_students.php"
                 class="<?php echo $current_page == 'my_class_students.php' ? 'active' : ''; ?>">

@@ -3,378 +3,379 @@ session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// 1. SECURITY & ID CHECK
-if (!isset($_SESSION['role']) || $_SESSION['role'] != 'admin') {
-    header("Location: ../index.php");
-    exit();
+// 1. AUTHENTICATION
+if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
+    header("Location: ../index.php"); exit(); 
 }
 
-if (!isset($_GET['student_id'])) {
-    echo "<script>window.location='manage_students.php';</script>";
-    exit();
-}
 $sid = $_GET['student_id'];
 
-// 2. FETCH STUDENT DATA
-$sql = "SELECT s.*, c.class_name, c.year 
-        FROM students s 
-        LEFT JOIN classes c ON s.class_id = c.class_id 
-        WHERE s.student_id = $sid";
-$result = $conn->query($sql);
-$student = $result->fetch_assoc();
+// 2. HANDLE EDIT SUBMISSION
+if(isset($_POST['update_student'])){
+    $name = $_POST['student_name'];
+    $ic = $_POST['ic_no'];
+    $phone = $_POST['phone'];
+    $addr = $_POST['address'];
+    $father = $_POST['father_name'];
+    $father_ph = $_POST['father_phone'];
+    $mother = $_POST['mother_name'];
+    $mother_ph = $_POST['mother_phone'];
+    
+    $stmt = $conn->prepare("UPDATE students SET student_name=?, ic_no=?, phone=?, address=?, father_name=?, father_phone=?, mother_name=?, mother_phone=? WHERE student_id=?");
+    $stmt->bind_param("ssssssssi", $name, $ic, $phone, $addr, $father, $father_ph, $mother, $mother_ph, $sid);
+    
+    if($stmt->execute()){
+        echo "<script>alert('Student details updated successfully!'); echo '<script>window.location.href=window.location.href;</script>';</script>";
+    } else {
+        echo "<script>alert('Error updating details.');</script>";
+    }
+}
 
-if (!$student)
-    die("Student record not found.");
+// 3. FETCH FULL STUDENT DATA
+$stu_q = $conn->query("SELECT s.*, c.class_name, c.year FROM students s LEFT JOIN classes c ON s.class_id = c.class_id WHERE s.student_id = $sid");
+$student = $stu_q->fetch_assoc();
+
+if(!$student) die("Student not found.");
+
+// 4. FETCH ENROLLED SUBJECTS & TEACHERS (Updated Query)
+$enrolled_sql = "SELECT sub.subject_name, sub.subject_code, u.full_name as teacher_name
+                 FROM student_subject_enrollment sse
+                 JOIN subjects sub ON sse.subject_id = sub.subject_id
+                 LEFT JOIN users u ON sub.teacher_id = u.user_id
+                 WHERE sse.student_id = $sid
+                 ORDER BY sub.subject_name ASC";
+$enrolled_res = $conn->query($enrolled_sql);
+
+// 5. FETCH ACADEMIC MARKS (Separate Query for Marks)
+$marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtained, sm.grade 
+                           FROM student_marks sm
+                           JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
+                           JOIN subjects sub ON sse.subject_id = sub.subject_id
+                           WHERE sse.student_id = $sid
+                           ORDER BY sm.exam_type DESC, sub.subject_name");
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
-    body {
-        background-color: #f4f6f9;
-        overflow-x: hidden;
-    }
-
-    /* Layout Fix */
+    body { background-color: #f4f6f9; overflow-x: hidden; }
     .main-content {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: calc(100% - 260px) !important;
-        margin-left: 260px !important;
-        min-height: 100vh;
-        padding: 0 !important;
-        display: block !important;
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important; margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important; display: block !important;
     }
+    .container-fluid { padding: 30px !important; }
+    
+    /* Profile Card */
+    .profile-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); overflow: hidden; }
+    .profile-header-bg { height: 100px; background: linear-gradient(135deg, #FFD700, #FDB931); }
+    .avatar-wrapper { margin-top: -50px; text-align: center; }
+    .avatar-xl { width: 110px; height: 110px; object-fit: cover; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    
+    /* Tabs */
+    .nav-tabs .nav-link { color: #555; border: none; border-bottom: 3px solid transparent; padding: 12px 20px; font-weight: 600; }
+    .nav-tabs .nav-link.active { color: #DAA520; border-bottom-color: #DAA520; background: none; }
+    .tab-content { padding: 25px; background: #fff; border-radius: 0 0 12px 12px; border: 1px solid #dee2e6; border-top: none; }
 
-    .container-fluid {
-        padding: 30px !important;
-    }
+    /* Info Lists */
+    .info-label { font-size: 0.75rem; text-transform: uppercase; color: #888; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px; display: block; }
+    .info-value { font-size: 0.95rem; font-weight: 500; color: #333; margin-bottom: 15px; display: block; }
+    
+    .section-title { font-size: 1rem; font-weight: 700; color: #DAA520; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
 
-    /* Profile Sidebar */
-    .profile-card {
-        border: none;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
-        overflow: hidden;
-    }
-
-    .profile-header-bg {
-        height: 120px;
-        background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%);
-    }
-
-    .avatar-wrapper {
-        margin-top: -60px;
-        text-align: center;
-    }
-
-    .avatar-xl {
-        width: 120px;
-        height: 120px;
-        border-radius: 50%;
-        border: 4px solid #fff;
-        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        object-fit: cover;
-    }
-
-    /* Info Sections */
-    .info-card {
-        border: none;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
-        margin-bottom: 20px;
-    }
-
-    .card-header-custom {
-        background: white;
-        padding: 15px 20px;
-        border-bottom: 1px solid #f0f0f0;
-        font-weight: 700;
-        color: #DAA520;
-        display: flex;
-        align-items: center;
-    }
-
-    .label-text {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #888;
-        font-weight: 600;
-        display: block;
-        margin-bottom: 3px;
-    }
-
-    .value-text {
-        font-size: 0.95rem;
-        font-weight: 500;
-        color: #333;
-    }
-
-    /* Status Badges */
-    .status-badge {
-        padding: 8px 15px;
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 0.85rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #f8f9fa;
-        margin-bottom: 10px;
-    }
-
-    .status-badge.active {
-        background: #e8f5e9;
-        color: #2e7d32;
-    }
-
-    .status-badge.inactive {
-        background: #ffebee;
-        color: #c62828;
-    }
-
-    @media (max-width: 992px) {
-        .main-content {
-            width: 100% !important;
-            margin-left: 0 !important;
-        }
-    }
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
 </style>
 
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
-
+    
     <div class="main-content">
         <div class="container-fluid">
-
+            
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <h2 class="fw-bold text-dark mb-0">Student Profile</h2>
-                    <p class="text-secondary mb-0">Register No:
-                        <strong><?php echo $student['school_register_no']; ?></strong>
-                    </p>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb mb-1">
+                            <li class="breadcrumb-item"><a href="my_class_students.php">Class List</a></li>
+                            <li class="breadcrumb-item active">Student Profile</li>
+                        </ol>
+                    </nav>
+                    <h2 class="fw-bold text-dark mb-0"><?php echo $student['student_name']; ?></h2>
                 </div>
-
+                
                 <div class="d-flex gap-2">
-                    <a href="manage_students.php" class="btn btn-light shadow-sm border">
-                        <i class="fas fa-arrow-left me-2"></i> Back
-                    </a>
-                    <a href="edit_student.php?student_id=<?php echo $sid; ?>" class="btn btn-warning fw-bold shadow-sm">
-                        <i class="fas fa-user-edit me-2"></i> Edit Profile
+                    <button class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#editModal">
+                        <i class="fas fa-user-edit me-2"></i> Edit
+                    </button>
+                    <a href="print_marksheet.php?student_id=<?php echo $sid; ?>" target="_blank" class="btn btn-primary">
+                        <i class="fas fa-print me-2"></i> Print Transcript
                     </a>
                 </div>
             </div>
 
             <div class="row g-4">
-
-                <div class="col-lg-4">
-                    <div class="card profile-card mb-4">
+                <div class="col-lg-3">
+                    <div class="card profile-card mb-3">
                         <div class="profile-header-bg"></div>
-                        <div class="card-body pt-0 text-center">
+                        <div class="card-body pt-0">
                             <div class="avatar-wrapper">
-                                <?php $photo = $student['photo'] ? "../uploads/" . $student['photo'] : "https://ui-avatars.com/api/?name=" . $student['student_name'] . "&background=random&size=150"; ?>
-                                <img src="<?php echo $photo; ?>" class="avatar-xl">
+                                <?php $img = $student['photo'] ? "../uploads/".$student['photo'] : "https://ui-avatars.com/api/?name=".$student['student_name']."&background=random"; ?>
+                                <img src="<?php echo $img; ?>" class="avatar-xl">
                             </div>
-                            <h4 class="mt-3 mb-1 fw-bold"><?php echo $student['student_name']; ?></h4>
-                            <p class="text-muted mb-3">
-                                <?php echo $student['ic_no'] ? $student['ic_no'] : 'No IC Number'; ?>
-                            </p>
-
-                            <?php if ($student['class_name']): ?>
-                                <span class="badge bg-warning text-dark border px-3 py-2 rounded-pill fs-6 mb-3">
-                                    <?php echo $student['class_name']; ?> (<?php echo $student['year']; ?>)
-                                </span>
-                            <?php else: ?>
-                                <span
-                                    class="badge bg-secondary text-white px-3 py-2 rounded-pill fs-6 mb-3">Unassigned</span>
-                            <?php endif; ?>
-
+                            <div class="text-center mt-3">
+                                <h5 class="fw-bold mb-1"><?php echo $student['student_name']; ?></h5>
+                                <p class="text-muted font-monospace small mb-2"><?php echo $student['school_register_no']; ?></p>
+                                <span class="badge bg-warning text-dark px-3 rounded-pill"><?php echo $student['class_name']; ?></span>
+                            </div>
                             <hr>
-
-                            <div class="text-start px-3">
-                                <div class="mb-3 d-flex align-items-center">
-                                    <i class="fas fa-venus-mars text-muted me-3 fs-5"
-                                        style="width:20px; text-align:center;"></i>
-                                    <div><span class="label-text">Gender</span> <span
-                                            class="value-text"><?php echo $student['gender']; ?></span></div>
-                                </div>
-                                <div class="mb-3 d-flex align-items-center">
-                                    <i class="fas fa-birthday-cake text-muted me-3 fs-5"
-                                        style="width:20px; text-align:center;"></i>
-                                    <div><span class="label-text">Date of Birth</span> <span
-                                            class="value-text"><?php echo $student['birthdate'] ? date('d M Y', strtotime($student['birthdate'])) : '-'; ?></span>
-                                    </div>
-                                </div>
-                                <div class="mb-3 d-flex align-items-center">
-                                    <i class="fas fa-phone text-muted me-3 fs-5"
-                                        style="width:20px; text-align:center;"></i>
-                                    <div><span class="label-text">Contact</span> <span
-                                            class="value-text"><?php echo $student['phone'] ? $student['phone'] : '-'; ?></span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card info-card">
-                        <div class="card-header-custom"><i class="fas fa-flag me-2"></i> Status Indicators</div>
-                        <div class="card-body p-3">
-                            <div
-                                class="status-badge <?php echo ($student['is_orphan'] == 'Yes') ? 'active' : 'inactive'; ?>">
-                                <span><i class="fas fa-child me-2"></i> Orphan Status</span>
-                                <strong><?php echo $student['is_orphan']; ?></strong>
-                            </div>
-                            <div
-                                class="status-badge <?php echo ($student['is_baitulmal_recipient'] == 'Yes') ? 'active' : 'inactive'; ?>">
-                                <span><i class="fas fa-hand-holding-heart me-2"></i> Baitulmal Recipient</span>
-                                <strong><?php echo $student['is_baitulmal_recipient']; ?></strong>
+                            <div>
+                                <span class="info-label"><i class="fas fa-id-card me-1"></i> IC Number</span>
+                                <span class="info-value"><?php echo $student['ic_no']; ?></span>
+                                
+                                <span class="info-label"><i class="fas fa-venus-mars me-1"></i> Gender</span>
+                                <span class="info-value"><?php echo $student['gender']; ?></span>
+                                
+                                <span class="info-label"><i class="fas fa-phone-alt me-1"></i> Phone</span>
+                                <span class="info-value"><?php echo $student['phone'] ? $student['phone'] : '-'; ?></span>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="col-lg-8">
+                <div class="col-lg-9">
+                    <div class="card shadow-sm">
+                        <ul class="nav nav-tabs px-3 pt-2" id="profileTabs" role="tablist">
+                            <li class="nav-item">
+                                <a class="nav-link active" data-bs-toggle="tab" href="#personal">
+                                    <i class="fas fa-user me-2"></i> Personal Info
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" data-bs-toggle="tab" href="#family">
+                                    <i class="fas fa-users me-2"></i> Family & Guardian
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" data-bs-toggle="tab" href="#cocurriculum">
+                                    <i class="fas fa-medal me-2"></i> Co-Curriculum
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" data-bs-toggle="tab" href="#academic">
+                                    <i class="fas fa-graduation-cap me-2"></i> Academic & Subjects
+                                </a>
+                            </li>
+                        </ul>
 
-                    <div class="card info-card">
-                        <div class="card-header-custom"><i class="fas fa-user-circle me-2"></i> Personal Details</div>
-                        <div class="card-body p-4">
-                            <div class="row g-4">
-                                <div class="col-md-6">
-                                    <span class="label-text">Full Name</span>
-                                    <span class="value-text"><?php echo $student['student_name']; ?></span>
+                        <div class="tab-content">
+                            
+                            <div class="tab-pane fade show active" id="personal">
+                                <h5 class="section-title">Identity & Background</h5>
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <span class="info-label">Full Name</span>
+                                        <span class="info-value"><?php echo $student['student_name']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Date of Birth</span>
+                                        <span class="info-value"><?php echo $student['birthdate']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Place of Birth</span>
+                                        <span class="info-value"><?php echo $student['birth_place']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Birth Cert No.</span>
+                                        <span class="info-value"><?php echo $student['birth_cert_no']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Race</span>
+                                        <span class="info-value"><?php echo $student['race']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Religion</span>
+                                        <span class="info-value"><?php echo $student['religion']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Nationality</span>
+                                        <span class="info-value"><?php echo $student['nationality']; ?></span>
+                                    </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <span class="label-text">MyKid / Passport</span>
-                                    <span class="value-text"><?php echo $student['ic_no']; ?></span>
-                                </div>
-                                <div class="col-md-4">
-                                    <span class="label-text">Birth Cert No</span>
-                                    <span class="value-text"><?php echo $student['birth_cert_no']; ?></span>
-                                </div>
-                                <div class="col-md-4">
-                                    <span class="label-text">Place of Birth</span>
-                                    <span class="value-text"><?php echo $student['birth_place']; ?></span>
-                                </div>
-                                <div class="col-md-4">
-                                    <span class="label-text">Race / Religion</span>
-                                    <span class="value-text"><?php echo $student['race']; ?> /
-                                        <?php echo $student['religion']; ?></span>
-                                </div>
-                                <div class="col-md-4">
-                                    <span class="label-text">Nationality</span>
-                                    <span class="value-text"><?php echo $student['nationality']; ?></span>
-                                </div>
-                                <div class="col-md-4">
-                                    <span class="label-text">Enrollment Date</span>
-                                    <span class="value-text"><?php echo $student['enrollment_date']; ?></span>
-                                </div>
-                                <div class="col-12">
-                                    <span class="label-text">Home Address</span>
-                                    <span class="value-text"><?php echo $student['address']; ?></span>
+                                
+                                <h5 class="section-title mt-4">Contact & Status</h5>
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <span class="info-label">Home Address</span>
+                                        <span class="info-value"><?php echo $student['address']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Date Enrolled</span>
+                                        <span class="info-value"><?php echo $student['enrollment_date']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Previous School</span>
+                                        <span class="info-value"><?php echo $student['previous_school']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Is Orphan?</span>
+                                        <span class="info-value"><?php echo $student['is_orphan']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Baitulmal Recipient?</span>
+                                        <span class="info-value"><?php echo $student['is_baitulmal_recipient']; ?></span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
 
-                    <div class="card info-card">
-                        <div class="card-header-custom"><i class="fas fa-users me-2"></i> Family Background</div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive">
-                                <table class="table table-hover mb-0">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th class="ps-4">Relation</th>
-                                            <th>Name</th>
-                                            <th>IC No</th>
-                                            <th>Phone</th>
-                                            <th>Job</th>
-                                            <th>Income</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr>
-                                            <td class="ps-4 fw-bold text-primary">Father</td>
-                                            <td><?php echo $student['father_name']; ?></td>
-                                            <td><?php echo $student['father_ic']; ?></td>
-                                            <td><?php echo $student['father_phone']; ?></td>
-                                            <td><?php echo $student['father_job']; ?></td>
-                                            <td><?php echo $student['father_salary']; ?></td>
-                                        </tr>
-                                        <tr>
-                                            <td class="ps-4 fw-bold text-danger">Mother</td>
-                                            <td><?php echo $student['mother_name']; ?></td>
-                                            <td><?php echo $student['mother_ic']; ?></td>
-                                            <td><?php echo $student['mother_phone']; ?></td>
-                                            <td><?php echo $student['mother_job']; ?></td>
-                                            <td><?php echo $student['mother_salary']; ?></td>
-                                        </tr>
-                                        <?php if ($student['guardian_name']): ?>
+                            <div class="tab-pane fade" id="family">
+                                <div class="row">
+                                    <div class="col-md-6 border-end">
+                                        <h5 class="section-title text-primary"><i class="fas fa-male me-2"></i> Father's Details</h5>
+                                        <span class="info-label">Name</span> <span class="info-value"><?php echo $student['father_name']; ?></span>
+                                        <span class="info-label">IC No</span> <span class="info-value"><?php echo $student['father_ic']; ?></span>
+                                        <span class="info-label">Phone</span> <span class="info-value"><?php echo $student['father_phone']; ?></span>
+                                        <span class="info-label">Occupation</span> <span class="info-value"><?php echo $student['father_job']; ?></span>
+                                        <span class="info-label">Salary</span> <span class="info-value">RM <?php echo $student['father_salary']; ?></span>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <h5 class="section-title text-danger"><i class="fas fa-female me-2"></i> Mother's Details</h5>
+                                        <span class="info-label">Name</span> <span class="info-value"><?php echo $student['mother_name']; ?></span>
+                                        <span class="info-label">IC No</span> <span class="info-value"><?php echo $student['mother_ic']; ?></span>
+                                        <span class="info-label">Phone</span> <span class="info-value"><?php echo $student['mother_phone']; ?></span>
+                                        <span class="info-label">Occupation</span> <span class="info-value"><?php echo $student['mother_job']; ?></span>
+                                        <span class="info-label">Salary</span> <span class="info-value">RM <?php echo $student['mother_salary']; ?></span>
+                                    </div>
+                                </div>
+                                <hr>
+                                <h5 class="section-title">Guardian (If Applicable)</h5>
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <span class="info-label">Name</span> <span class="info-value"><?php echo $student['guardian_name']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Contact</span> <span class="info-value"><?php echo $student['guardian_phone']; ?></span>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <span class="info-label">Relation</span> <span class="info-value">
+                                            <?php echo ($student['guardian_name']) ? 'Guardian' : '-'; ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tab-pane fade" id="cocurriculum">
+                                <h5 class="section-title">Uniform Bodies</h5>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <span class="info-label">Unit Name</span>
+                                        <span class="info-value fw-bold text-primary"><?php echo $student['uniform_unit']; ?></span>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <span class="info-label">Position Held</span>
+                                        <span class="info-value"><?php echo $student['uniform_position']; ?></span>
+                                    </div>
+                                </div>
+                                
+                                <h5 class="section-title">Clubs & Associations</h5>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <span class="info-label">Club Name</span>
+                                        <span class="info-value fw-bold text-success"><?php echo $student['club_association']; ?></span>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <span class="info-label">Position Held</span>
+                                        <span class="info-value"><?php echo $student['club_position']; ?></span>
+                                    </div>
+                                </div>
+                                
+                                <h5 class="section-title">Sports & Games</h5>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <span class="info-label">Sport Name</span>
+                                        <span class="info-value fw-bold text-warning"><?php echo $student['sports_game']; ?></span>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <span class="info-label">Position Held</span>
+                                        <span class="info-value"><?php echo $student['sports_position']; ?></span>
+                                    </div>
+                                    <div class="col-md-6 mt-2">
+                                        <span class="info-label">Sports House</span>
+                                        <span class="info-value text-uppercase fw-bold"><?php echo $student['sports_house']; ?></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tab-pane fade" id="academic">
+                                
+                                <h5 class="section-title"><i class="fas fa-book-open me-2"></i> Enrolled Subjects</h5>
+                                <div class="table-responsive mb-4">
+                                    <table class="table table-sm table-bordered mb-0">
+                                        <thead class="bg-light">
                                             <tr>
-                                                <td class="ps-4 fw-bold text-secondary">Guardian</td>
-                                                <td><?php echo $student['guardian_name']; ?></td>
-                                                <td><?php echo $student['guardian_ic']; ?></td>
-                                                <td><?php echo $student['guardian_phone']; ?></td>
-                                                <td><?php echo $student['guardian_job']; ?></td>
-                                                <td><?php echo $student['guardian_salary']; ?></td>
+                                                <th>Subject Name</th>
+                                                <th>Code</th>
+                                                <th>Subject Teacher</th>
                                             </tr>
-                                        <?php endif; ?>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="p-3 bg-light border-top">
-                                <small class="fw-bold text-muted text-uppercase">Parents Marital Status:</small>
-                                <span
-                                    class="fw-bold text-dark ms-2"><?php echo $student['parents_marital_status']; ?></span>
-                            </div>
-                        </div>
-                    </div>
+                                        </thead>
+                                        <tbody>
+                                            <?php if($enrolled_res->num_rows > 0): ?>
+                                                <?php while($sub = $enrolled_res->fetch_assoc()): ?>
+                                                <tr>
+                                                    <td class="fw-bold"><?php echo $sub['subject_name']; ?></td>
+                                                    <td class="font-monospace text-muted small"><?php echo $sub['subject_code']; ?></td>
+                                                    <td>
+                                                        <?php if($sub['teacher_name']): ?>
+                                                            <span class="text-primary"><i class="fas fa-user-check me-1"></i> <?php echo $sub['teacher_name']; ?></span>
+                                                        <?php else: ?>
+                                                            <span class="text-muted fst-italic">Not Assigned</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <?php endwhile; ?>
+                                            <?php else: ?>
+                                                <tr><td colspan="3" class="text-center text-muted">No subjects enrolled yet.</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
 
-                    <div class="card info-card">
-                        <div class="card-header-custom"><i class="fas fa-running me-2"></i> Co-Curriculum Activities
-                        </div>
-                        <div class="card-body p-4">
-                            <div class="row g-4">
-                                <div class="col-md-4">
-                                    <div class="p-3 border rounded bg-light h-100">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-tshirt text-primary me-2 fs-5"></i>
-                                            <h6 class="fw-bold m-0">Uniform Unit</h6>
-                                        </div>
-                                        <div class="fw-bold text-dark"><?php echo $student['uniform_unit']; ?></div>
-                                        <small class="text-muted"><?php echo $student['uniform_position']; ?></small>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="p-3 border rounded bg-light h-100">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-users text-success me-2 fs-5"></i>
-                                            <h6 class="fw-bold m-0">Club / Society</h6>
-                                        </div>
-                                        <div class="fw-bold text-dark"><?php echo $student['club_association']; ?></div>
-                                        <small class="text-muted"><?php echo $student['club_position']; ?></small>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="p-3 border rounded bg-light h-100">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-volleyball-ball text-warning me-2 fs-5"></i>
-                                            <h6 class="fw-bold m-0">Sports & Games</h6>
-                                        </div>
-                                        <div class="fw-bold text-dark"><?php echo $student['sports_game']; ?></div>
-                                        <small class="text-muted"><?php echo $student['sports_position']; ?></small>
-                                        <div class="mt-2 pt-2 border-top">
-                                            <small class="text-muted text-uppercase fw-bold">House:</small>
-                                            <span class="fw-bold text-uppercase"
-                                                style="color:<?php echo strtolower($student['sports_house']); ?>"><?php echo $student['sports_house']; ?></span>
-                                        </div>
-                                    </div>
+                                <h5 class="section-title"><i class="fas fa-chart-line me-2"></i> Examination Results</h5>
+                                <div class="table-responsive">
+                                    <table class="table table-hover table-bordered align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Exam Type</th>
+                                                <th>Subject</th>
+                                                <th class="text-center">Mark</th>
+                                                <th class="text-center">Grade</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php if($marks_res->num_rows > 0): ?>
+                                                <?php while($m = $marks_res->fetch_assoc()): ?>
+                                                <tr>
+                                                    <td class="fw-bold"><?php echo $m['exam_type']; ?></td>
+                                                    <td><?php echo $m['subject_name']; ?></td>
+                                                    <td class="text-center fw-bold"><?php echo $m['mark_obtained']; ?></td>
+                                                    <td class="text-center">
+                                                        <?php 
+                                                        $g = $m['grade'];
+                                                        $badge = ($g=='A'||$g=='B')?'success':(($g=='C')?'warning':'danger');
+                                                        echo "<span class='badge bg-$badge'>$g</span>";
+                                                        ?>
+                                                    </td>
+                                                </tr>
+                                                <?php endwhile; ?>
+                                            <?php else: ?>
+                                                <tr><td colspan="4" class="text-center text-muted py-4">No exam records found.</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
-                        </div>
-                    </div>
 
+                        </div> </div>
                 </div>
             </div>
 
@@ -382,7 +383,62 @@ if (!$student)
     </div>
 </div>
 
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">Update Student Profile</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12"><h6 class="text-primary fw-bold">Student Info</h6></div>
+                        <div class="col-md-6">
+                            <label class="form-label">Full Name</label>
+                            <input type="text" name="student_name" class="form-control" value="<?php echo $student['student_name']; ?>" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">IC Number</label>
+                            <input type="text" name="ic_no" class="form-control" value="<?php echo $student['ic_no']; ?>">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Phone</label>
+                            <input type="text" name="phone" class="form-control" value="<?php echo $student['phone']; ?>">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Address</label>
+                            <input type="text" name="address" class="form-control" value="<?php echo $student['address']; ?>">
+                        </div>
+
+                        <div class="col-12 mt-3"><h6 class="text-primary fw-bold">Parents Info</h6></div>
+                        <div class="col-md-6">
+                            <label class="form-label">Father's Name</label>
+                            <input type="text" name="father_name" class="form-control" value="<?php echo $student['father_name']; ?>">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Father's Phone</label>
+                            <input type="text" name="father_phone" class="form-control" value="<?php echo $student['father_phone']; ?>">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Mother's Name</label>
+                            <input type="text" name="mother_name" class="form-control" value="<?php echo $student['mother_name']; ?>">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Mother's Phone</label>
+                            <input type="text" name="mother_phone" class="form-control" value="<?php echo $student['mother_phone']; ?>">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="update_student" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
-
 </html>

@@ -10,7 +10,7 @@ if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
 
 $sid = $_GET['student_id'];
 
-// 2. HANDLE EDIT SUBMISSION (Expanded for common fields)
+// 2. HANDLE EDIT SUBMISSION
 if(isset($_POST['update_student'])){
     $name = $_POST['student_name'];
     $ic = $_POST['ic_no'];
@@ -37,8 +37,17 @@ $student = $stu_q->fetch_assoc();
 
 if(!$student) die("Student not found.");
 
-// 4. FETCH ACADEMIC MARKS
-$marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_type, sm.mark_obtained, sm.grade 
+// 4. FETCH ENROLLED SUBJECTS & TEACHERS (Updated Query)
+$enrolled_sql = "SELECT sub.subject_name, sub.subject_code, u.full_name as teacher_name
+                 FROM student_subject_enrollment sse
+                 JOIN subjects sub ON sse.subject_id = sub.subject_id
+                 LEFT JOIN users u ON sub.teacher_id = u.user_id
+                 WHERE sse.student_id = $sid
+                 ORDER BY sub.subject_name ASC";
+$enrolled_res = $conn->query($enrolled_sql);
+
+// 5. FETCH ACADEMIC MARKS (Separate Query for Marks)
+$marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtained, sm.grade 
                            FROM student_marks sm
                            JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
                            JOIN subjects sub ON sse.subject_id = sub.subject_id
@@ -47,6 +56,7 @@ $marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_ty
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
     body { background-color: #f4f6f9; overflow-x: hidden; }
     .main-content {
@@ -152,7 +162,7 @@ $marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_ty
                             </li>
                             <li class="nav-item">
                                 <a class="nav-link" data-bs-toggle="tab" href="#academic">
-                                    <i class="fas fa-graduation-cap me-2"></i> Academic
+                                    <i class="fas fa-graduation-cap me-2"></i> Academic & Subjects
                                 </a>
                             </li>
                         </ul>
@@ -297,7 +307,40 @@ $marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_ty
                             </div>
 
                             <div class="tab-pane fade" id="academic">
-                                <h5 class="section-title">Examination Results</h5>
+                                
+                                <h5 class="section-title"><i class="fas fa-book-open me-2"></i> Enrolled Subjects</h5>
+                                <div class="table-responsive mb-4">
+                                    <table class="table table-sm table-bordered mb-0">
+                                        <thead class="bg-light">
+                                            <tr>
+                                                <th>Subject Name</th>
+                                                <th>Code</th>
+                                                <th>Subject Teacher</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php if($enrolled_res->num_rows > 0): ?>
+                                                <?php while($sub = $enrolled_res->fetch_assoc()): ?>
+                                                <tr>
+                                                    <td class="fw-bold"><?php echo $sub['subject_name']; ?></td>
+                                                    <td class="font-monospace text-muted small"><?php echo $sub['subject_code']; ?></td>
+                                                    <td>
+                                                        <?php if($sub['teacher_name']): ?>
+                                                            <span class="text-primary"><i class="fas fa-user-check me-1"></i> <?php echo $sub['teacher_name']; ?></span>
+                                                        <?php else: ?>
+                                                            <span class="text-muted fst-italic">Not Assigned</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <?php endwhile; ?>
+                                            <?php else: ?>
+                                                <tr><td colspan="3" class="text-center text-muted">No subjects enrolled yet.</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <h5 class="section-title"><i class="fas fa-chart-line me-2"></i> Examination Results</h5>
                                 <div class="table-responsive">
                                     <table class="table table-hover table-bordered align-middle mb-0">
                                         <thead class="table-light">
@@ -313,7 +356,7 @@ $marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_ty
                                                 <?php while($m = $marks_res->fetch_assoc()): ?>
                                                 <tr>
                                                     <td class="fw-bold"><?php echo $m['exam_type']; ?></td>
-                                                    <td><?php echo $m['subject_name']; ?> <small class="text-muted">(<?php echo $m['subject_code']; ?>)</small></td>
+                                                    <td><?php echo $m['subject_name']; ?></td>
                                                     <td class="text-center fw-bold"><?php echo $m['mark_obtained']; ?></td>
                                                     <td class="text-center">
                                                         <?php 
@@ -325,7 +368,7 @@ $marks_res = $conn->query("SELECT sub.subject_name, sub.subject_code, sm.exam_ty
                                                 </tr>
                                                 <?php endwhile; ?>
                                             <?php else: ?>
-                                                <tr><td colspan="4" class="text-center text-muted py-4">No academic records found.</td></tr>
+                                                <tr><td colspan="4" class="text-center text-muted py-4">No exam records found.</td></tr>
                                             <?php endif; ?>
                                         </tbody>
                                     </table>
