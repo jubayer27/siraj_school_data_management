@@ -1,250 +1,382 @@
 <?php
+session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// --- 1. FETCH LIVE STATISTICS ---
+// 1. SECURITY CHECK
+if (!isset($_SESSION['role']) || $_SESSION['role'] != 'admin') {
+    header("Location: ../index.php");
+    exit();
+}
+
+// 2. FETCH LIVE STATISTICS
 $stats = [
     'students' => $conn->query("SELECT count(*) as c FROM students")->fetch_assoc()['c'],
     'teachers' => $conn->query("SELECT count(*) as c FROM users WHERE role != 'admin'")->fetch_assoc()['c'],
-    'classes'  => $conn->query("SELECT count(*) as c FROM classes")->fetch_assoc()['c'],
+    'classes' => $conn->query("SELECT count(*) as c FROM classes")->fetch_assoc()['c'],
     'subjects' => $conn->query("SELECT count(*) as c FROM subjects")->fetch_assoc()['c']
 ];
 
-// --- 2. FETCH RECENT DATA ---
-// Recent Students
+// 3. FETCH RECENT ADMISSIONS
 $recent_students = $conn->query("SELECT s.*, c.class_name FROM students s 
                                  LEFT JOIN classes c ON s.class_id = c.class_id 
                                  ORDER BY s.student_id DESC LIMIT 5");
 
-// Recent Notices
+// 4. FETCH RECENT NOTICES
 $recent_notices = $conn->query("SELECT * FROM notices ORDER BY created_at DESC LIMIT 4");
 ?>
 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+<style>
+    body {
+        background-color: #f4f6f9;
+        overflow-x: hidden;
+    }
+
+    /* Layout Overrides */
+    .main-content {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh;
+        padding: 0 !important;
+        display: block !important;
+    }
+
+    .container-fluid {
+        padding: 30px !important;
+    }
+
+    /* DASHBOARD CARDS */
+    .stat-card {
+        border: none;
+        border-radius: 15px;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+        transition: transform 0.3s ease;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-5px);
+    }
+
+    .stat-icon-bg {
+        position: absolute;
+        right: -10px;
+        bottom: -10px;
+        font-size: 5rem;
+        opacity: 0.1;
+        transform: rotate(-15deg);
+    }
+
+    .gradient-1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+
+    .gradient-2 {
+        background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%);
+        color: #333;
+    }
+
+    .gradient-3 {
+        background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 99%, #fecfef 100%);
+        color: #555;
+    }
+
+    .gradient-4 {
+        background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+        color: #333;
+    }
+
+    /* QUICK ACTIONS */
+    .action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: white;
+        border: 1px solid #eee;
+        border-radius: 12px;
+        padding: 20px 10px;
+        text-decoration: none;
+        color: #555;
+        transition: all 0.2s;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+        height: 100%;
+    }
+
+    .action-btn i {
+        font-size: 1.8rem;
+        margin-bottom: 10px;
+        color: #DAA520;
+    }
+
+    .action-btn:hover {
+        background: #fffcf0;
+        border-color: #DAA520;
+        transform: translateY(-3px);
+    }
+
+    .action-btn span {
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    /* DATA HUB (Export/Import) */
+    .data-hub-card {
+        background: #2c3e50;
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .btn-glass {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: white;
+        border-radius: 30px;
+        padding: 8px 20px;
+        text-decoration: none;
+        transition: 0.2s;
+        font-size: 0.9rem;
+    }
+
+    .btn-glass:hover {
+        background: rgba(255, 255, 255, 0.2);
+        color: #FFD700;
+    }
+
+    /* TABLE STYLES */
+    .custom-table thead th {
+        background: #f8f9fa;
+        border-bottom: 2px solid #eee;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        color: #777;
+    }
+
+    .custom-table td {
+        vertical-align: middle;
+        font-size: 0.95rem;
+    }
+
+    @media (max-width: 992px) {
+        .main-content {
+            width: 100% !important;
+            margin-left: 0 !important;
+        }
+    }
+</style>
+
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
-    
+
     <div class="main-content">
-        <div class="page-header">
-            <div>
-                <h1>Admin Dashboard</h1>
-                <p>Overview of school performance and daily activities.</p>
-            </div>
-            <div style="font-size:0.9rem; color:#888; background:white; padding:10px 20px; border-radius:30px; border:1px solid #ddd;">
-                <i class="far fa-calendar-alt"></i> <?php echo date('l, d F Y'); ?>
-            </div>
-        </div>
+        <div class="container-fluid">
 
-        <div class="stats-grid">
-            <div class="card stat-card">
-                <div class="stat-icon" style="background: rgba(255, 215, 0, 0.15); color: #DAA520;">
-                    <i class="fas fa-user-graduate"></i>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Admin Dashboard</h2>
+                    <p class="text-secondary mb-0">System Overview & Controls</p>
                 </div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['students']; ?></h3>
-                    <span>Total Students</span>
-                </div>
-            </div>
-            
-            <div class="card stat-card">
-                <div class="stat-icon" style="background: rgba(46, 204, 113, 0.15); color: #27ae60;">
-                    <i class="fas fa-chalkboard-teacher"></i>
-                </div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['teachers']; ?></h3>
-                    <span>Active Teachers</span>
+                <div class="d-none d-md-block">
+                    <span class="badge bg-white text-dark border p-2 shadow-sm rounded-pill">
+                        <i class="far fa-calendar-alt text-warning me-2"></i> <?php echo date('l, d F Y'); ?>
+                    </span>
                 </div>
             </div>
 
-            <div class="card stat-card">
-                <div class="stat-icon" style="background: rgba(52, 152, 219, 0.15); color: #2980b9;">
-                    <i class="fas fa-school"></i>
+            <div class="row g-4 mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card gradient-1 p-4 h-100">
+                        <div class="position-relative z-1">
+                            <h2 class="fw-bold mb-0"><?php echo $stats['students']; ?></h2>
+                            <p class="mb-0 opacity-75">Total Students</p>
+                        </div>
+                        <i class="fas fa-user-graduate stat-icon-bg"></i>
+                    </div>
                 </div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['classes']; ?></h3>
-                    <span>Total Classes</span>
+                <div class="col-md-3">
+                    <div class="stat-card gradient-2 p-4 h-100">
+                        <div class="position-relative z-1">
+                            <h2 class="fw-bold mb-0"><?php echo $stats['teachers']; ?></h2>
+                            <p class="mb-0 opacity-75">Active Teachers</p>
+                        </div>
+                        <i class="fas fa-chalkboard-teacher stat-icon-bg"></i>
+                    </div>
                 </div>
-            </div>
-
-            <div class="card stat-card">
-                <div class="stat-icon" style="background: rgba(155, 89, 182, 0.15); color: #8e44ad;">
-                    <i class="fas fa-book-open"></i>
+                <div class="col-md-3">
+                    <div class="stat-card gradient-3 p-4 h-100">
+                        <div class="position-relative z-1">
+                            <h2 class="fw-bold mb-0"><?php echo $stats['classes']; ?></h2>
+                            <p class="mb-0 opacity-75">Active Classes</p>
+                        </div>
+                        <i class="fas fa-school stat-icon-bg"></i>
+                    </div>
                 </div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['subjects']; ?></h3>
-                    <span>Subjects</span>
-                </div>
-            </div>
-        </div>
-
-        <h3 class="section-title">Quick Actions</h3>
-        <div class="action-grid">
-            <a href="manage_students.php" class="action-btn">
-                <i class="fas fa-plus-circle"></i> Add Student
-            </a>
-            <a href="manage_users.php" class="action-btn">
-                <i class="fas fa-user-plus"></i> Add Teacher
-            </a>
-            <a href="manage_notices.php" class="action-btn">
-                <i class="fas fa-bullhorn"></i> Post Notice
-            </a>
-            <a href="manage_all_marks.php" class="action-btn">
-                <i class="fas fa-star-half-alt"></i> Manage Marks
-            </a>
-            <a href="manage_classes.php" class="action-btn">
-                <i class="fas fa-layer-group"></i> Create Class
-            </a>
-        </div>
-
-        <div class="content-split">
-            
-            <div class="card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h3>New Admissions</h3>
-                    <a href="manage_students.php" style="font-size:0.85rem; color:#DAA520; text-decoration:none;">View All</a>
-                </div>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Class</th>
-                                <th>Reg No</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php while($stu = $recent_students->fetch_assoc()): ?>
-                            <tr>
-                                <td style="font-weight:600; color:#444;">
-                                    <i class="fas fa-user-circle" style="color:#ddd; margin-right:5px;"></i>
-                                    <?php echo $stu['student_name']; ?>
-                                </td>
-                                <td>
-                                    <?php if($stu['class_name']): ?>
-                                        <span class="badge badge-gold"><?php echo $stu['class_name']; ?></span>
-                                    <?php else: ?>
-                                        <span class="badge badge-gray">Unassigned</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td><?php echo $stu['school_register_no']; ?></td>
-                            </tr>
-                            <?php endwhile; ?>
-                        </tbody>
-                    </table>
+                <div class="col-md-3">
+                    <div class="stat-card gradient-4 p-4 h-100">
+                        <div class="position-relative z-1">
+                            <h2 class="fw-bold mb-0"><?php echo $stats['subjects']; ?></h2>
+                            <p class="mb-0 opacity-75">Subjects</p>
+                        </div>
+                        <i class="fas fa-book-open stat-icon-bg"></i>
+                    </div>
                 </div>
             </div>
 
-            <div class="card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h3>Notice Board</h3>
-                    <a href="manage_notices.php" style="font-size:0.85rem; color:#DAA520; text-decoration:none;">View All</a>
-                </div>
-                <ul class="notice-list">
-                    <?php if($recent_notices->num_rows > 0): ?>
-                        <?php while($note = $recent_notices->fetch_assoc()): ?>
-                        <li class="notice-item">
-                            <div class="notice-icon">
-                                <?php 
-                                    if($note['type']=='alert') echo '<i class="fas fa-exclamation-triangle" style="color:#e74c3c;"></i>';
-                                    elseif($note['type']=='event') echo '<i class="fas fa-calendar-check" style="color:#27ae60;"></i>';
-                                    else echo '<i class="fas fa-info-circle" style="color:#3498db;"></i>';
-                                ?>
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="data-hub-card shadow-sm">
+                        <div class="d-flex align-items-center">
+                            <div class="icon-box me-3 p-3 rounded bg-white bg-opacity-10 text-warning">
+                                <i class="fas fa-database fa-2x"></i>
                             </div>
-                            <div class="notice-content">
-                                <h4 class="notice-title"><?php echo $note['title']; ?></h4>
-                                <span class="notice-date"><?php echo date('M d, Y', strtotime($note['created_at'])); ?></span>
+                            <div>
+                                <h5 class="fw-bold mb-1">Data Command Center</h5>
+                                <p class="mb-0 small opacity-75">Manage bulk data operations securely.</p>
                             </div>
-                        </li>
-                        <?php endwhile; ?>
-                    <?php else: ?>
-                        <li style="color:#999; text-align:center; padding:20px;">No recent notices.</li>
-                    <?php endif; ?>
-                </ul>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <a href="export_data.php?type=students" class="btn-glass"><i
+                                    class="fas fa-file-download me-2"></i> Export Students</a>
+                            <a href="export_data.php?type=marks" class="btn-glass"><i
+                                    class="fas fa-file-excel me-2"></i> Export Marks</a>
+                            <a href="import_data.php" class="btn-glass bg-warning text-dark border-0 fw-bold"><i
+                                    class="fas fa-file-upload me-2"></i> Bulk Import</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="fw-bold text-dark mb-3 ps-1">Quick Actions</h5>
+            <div class="row g-3 mb-4">
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="manage_students.php" class="action-btn">
+                        <i class="fas fa-user-plus"></i>
+                        <span>Add Student</span>
+                    </a>
+                </div>
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="manage_users.php" class="action-btn">
+                        <i class="fas fa-chalkboard-teacher"></i>
+                        <span>Add Teacher</span>
+                    </a>
+                </div>
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="manage_classes.php" class="action-btn">
+                        <i class="fas fa-layer-group"></i>
+                        <span>Classes</span>
+                    </a>
+                </div>
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="manage_subjects.php" class="action-btn">
+                        <i class="fas fa-book"></i>
+                        <span>Subjects</span>
+                    </a>
+                </div>
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="manage_notices.php" class="action-btn">
+                        <i class="fas fa-bullhorn"></i>
+                        <span>Notices</span>
+                    </a>
+                </div>
+                <div class="col-6 col-md-4 col-lg-2">
+                    <a href="settings.php" class="action-btn">
+                        <i class="fas fa-cogs"></i>
+                        <span>Settings</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="row g-4">
+
+                <div class="col-lg-8">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="fw-bold mb-0 text-uppercase"><i class="fas fa-clock text-warning me-2"></i> New
+                                Admissions</h6>
+                            <a href="manage_students.php" class="btn btn-sm btn-light text-primary fw-bold">View All</a>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table custom-table align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th class="ps-4">Student Name</th>
+                                        <th>Class</th>
+                                        <th>Reg No</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php while ($stu = $recent_students->fetch_assoc()): ?>
+                                        <tr>
+                                            <td class="ps-4 fw-bold text-dark">
+                                                <?php $img = $stu['photo'] ? "../uploads/" . $stu['photo'] : "https://ui-avatars.com/api/?name=" . $stu['student_name']; ?>
+                                                <img src="<?php echo $img; ?>" width="30" height="30"
+                                                    class="rounded-circle me-2">
+                                                <?php echo $stu['student_name']; ?>
+                                            </td>
+                                            <td><span
+                                                    class="badge bg-light text-dark border"><?php echo $stu['class_name'] ?? 'Unassigned'; ?></span>
+                                            </td>
+                                            <td class="font-monospace text-muted"><?php echo $stu['school_register_no']; ?>
+                                            </td>
+                                            <td><span class="badge bg-success-subtle text-success">Active</span></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-4">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="fw-bold mb-0 text-uppercase"><i class="fas fa-bell text-danger me-2"></i> Notice
+                                Board</h6>
+                            <a href="manage_notices.php" class="btn btn-sm btn-light text-primary fw-bold">Post New</a>
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <?php if ($recent_notices->num_rows > 0): ?>
+                                <?php while ($n = $recent_notices->fetch_assoc()): ?>
+                                    <div class="list-group-item px-4 py-3 border-bottom-0">
+                                        <div class="d-flex w-100 justify-content-between">
+                                            <h6 class="mb-1 fw-bold text-dark"><?php echo $n['title']; ?></h6>
+                                            <small class="text-muted"
+                                                style="font-size:0.7rem;"><?php echo date('M d', strtotime($n['created_at'])); ?></small>
+                                        </div>
+                                        <p class="mb-1 small text-secondary text-truncate" style="max-width: 250px;">
+                                            <?php echo $n['message']; ?>
+                                        </p>
+                                        <small class="badge bg-light text-secondary border">
+                                            <?php echo ucfirst($n['type']); ?>
+                                        </small>
+                                    </div>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <div class="p-4 text-center text-muted">No active notices.</div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
-
     </div>
 </div>
 
-<style>
-    /* Stats Grid */
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 20px;
-        margin-bottom: 30px;
-    }
-    .stat-card {
-        display: flex;
-        align-items: center;
-        padding: 25px;
-        border-left: 5px solid transparent;
-        transition: transform 0.2s;
-    }
-    .stat-card:hover { transform: translateY(-5px); border-left-color: #FFD700; }
-    .stat-icon {
-        width: 60px; height: 60px;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 1.5rem;
-        margin-right: 20px;
-    }
-    .stat-info h3 { font-size: 1.8rem; margin: 0; color: #333; }
-    .stat-info span { color: #888; font-size: 0.9rem; }
-
-    /* Quick Actions */
-    .section-title { margin-bottom: 15px; font-weight: 600; color: #555; }
-    .action-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        gap: 15px;
-        margin-bottom: 30px;
-    }
-    .action-btn {
-        background: white;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-        text-decoration: none;
-        color: #555;
-        border: 1px solid #eee;
-        transition: 0.3s;
-        font-weight: 500;
-        display: flex; flex-direction: column; align-items: center; gap: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
-    }
-    .action-btn i { font-size: 1.5rem; color: #DAA520; }
-    .action-btn:hover {
-        background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%);
-        color: white;
-        border-color: transparent;
-        transform: translateY(-2px);
-    }
-    .action-btn:hover i { color: white; }
-
-    /* Content Split */
-    .content-split {
-        display: grid;
-        grid-template-columns: 2fr 1fr; /* Table takes more space */
-        gap: 25px;
-    }
-    @media (max-width: 900px) { .content-split { grid-template-columns: 1fr; } }
-
-    /* Badges */
-    .badge { padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-    .badge-gold { background: #fff8e1; color: #b8860b; border: 1px solid #ffe082; }
-    .badge-gray { background: #f0f0f0; color: #888; }
-
-    /* Notices */
-    .notice-list { list-style: none; padding: 0; margin: 0; }
-    .notice-item {
-        display: flex; align-items: flex-start;
-        padding: 15px 0;
-        border-bottom: 1px dashed #eee;
-    }
-    .notice-item:last-child { border-bottom: none; }
-    .notice-icon { margin-right: 15px; font-size: 1.1rem; margin-top: 2px; }
-    .notice-title { margin: 0 0 5px 0; font-size: 0.95rem; font-weight: 600; color: #444; }
-    .notice-date { font-size: 0.8rem; color: #999; }
-</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>

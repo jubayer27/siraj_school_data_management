@@ -39,7 +39,6 @@ if(isset($_POST['add_user'])){
         
         if($stmt->execute()){
             $success = "New user created successfully!";
-            // Clear post data to prevent resubmission
             echo "<script>if ( window.history.replaceState ) { window.history.replaceState( null, null, window.location.href ); }</script>";
         } else {
             $error = "Database Error: " . $conn->error;
@@ -62,170 +61,200 @@ $sql .= " ORDER BY u.created_at DESC";
 $users = $conn->query($sql);
 ?>
 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<style>
+    body { background-color: #f4f6f9; overflow-x: hidden; }
+    
+    .main-content {
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important; margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important; display: block !important;
+    }
+    .container-fluid { padding: 30px !important; }
+
+    /* Custom Card */
+    #addUserForm { border-top: 5px solid #FFD700; transition: all 0.3s ease; }
+    
+    /* Table Styling */
+    .table-hover tbody tr:hover { background-color: #fcfcfc; }
+    .avatar-sm { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1px solid #eee; margin-right: 12px; }
+
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
+</style>
+
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="page-header">
-            <div>
-                <h1>Staff & User Directory</h1>
-                <p>Manage system access and teaching staff.</p>
-            </div>
-            <button onclick="toggleForm()" class="btn btn-primary">
-                <i class="fas fa-plus-circle"></i> Add New Staff
-            </button>
-        </div>
-
-        <?php if(isset($success)) echo "<div class='alert-box success'>$success</div>"; ?>
-        <?php if(isset($error)) echo "<div class='alert-box error'>$error</div>"; ?>
-        <?php if(isset($_GET['msg'])){
-            if($_GET['msg']=='deleted') echo "<div class='alert-box error'>User account deleted.</div>";
-            if($_GET['msg']=='updated') echo "<div class='alert-box success'>User profile updated successfully.</div>";
-        } ?>
-
-        <div class="card" id="addUserForm" style="display:none; border-top: 5px solid #FFD700;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <h3 style="margin:0;">Create New Profile</h3>
-                <button type="button" onclick="toggleForm()" style="background:none; border:none; color:#999; cursor:pointer;"><i class="fas fa-times"></i></button>
-            </div>
+        <div class="container-fluid">
             
-            <form method="POST" class="form-grid" autocomplete="off">
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" name="full_name" required>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Staff & User Directory</h2>
+                    <p class="text-secondary mb-0">Manage system access and teaching staff.</p>
                 </div>
-                <div class="form-group">
-                    <label>Role</label>
-                    <select name="role">
-                        <option value="subject_teacher">Subject Teacher</option>
-                        <option value="class_teacher">Class Teacher</option>
-                        <option value="admin">Administrator</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Staff ID / Teacher No</label>
-                    <input type="text" name="teacher_id_no" placeholder="e.g. T-2025-001">
-                </div>
-                
-                <div class="form-group">
-                    <label>IC Number</label>
-                    <input type="text" name="ic_no">
-                </div>
-                <div class="form-group">
-                    <label>Phone Contact</label>
-                    <input type="text" name="phone">
-                </div>
-                <div class="form-group">
-                    <label>Login Username</label>
-                    <input type="text" name="username" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" name="password" required>
-                </div>
-                
-                <div style="grid-column: 1 / -1; margin-top:15px; text-align:right;">
-                    <button type="button" onclick="toggleForm()" class="btn btn-secondary" style="margin-right:10px;">Cancel</button>
-                    <button type="submit" name="add_user" class="btn btn-primary">Create User</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="card" style="padding:15px; background:#fdfdfd; display:flex; gap:15px; align-items:center;">
-            <form method="GET" style="display:flex; gap:10px; width:100%;">
-                <select name="role" style="width:200px;">
-                    <option value="">All Roles</option>
-                    <option value="subject_teacher" <?php if($filter_role=='subject_teacher') echo 'selected'; ?>>Subject Teacher</option>
-                    <option value="class_teacher" <?php if($filter_role=='class_teacher') echo 'selected'; ?>>Class Teacher</option>
-                    <option value="admin" <?php if($filter_role=='admin') echo 'selected'; ?>>Admin</option>
-                </select>
-                <input type="text" name="search" placeholder="Search by Name or ID..." value="<?php echo $search_query; ?>">
-                <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Filter</button>
-                <?php if($filter_role || $search_query): ?>
-                    <a href="manage_users.php" class="btn btn-danger" style="background:#888;">Reset</a>
-                <?php endif; ?>
-            </form>
-        </div>
-
-        <div class="card">
-            <div class="table-responsive">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Staff Info</th>
-                            <th>Contact</th>
-                            <th>Role</th>
-                            <th>Teaching Subjects</th>
-                            <th style="text-align:right;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if($users->num_rows > 0): ?>
-                            <?php while($row = $users->fetch_assoc()): ?>
-                            <tr>
-                                <td>
-                                    <div style="display:flex; align-items:center;">
-                                        <?php 
-                                            $avatar = $row['avatar'] ? "../uploads/".$row['avatar'] : "https://ui-avatars.com/api/?name=".$row['full_name']."&background=f0f0f0&color=DAA520";
-                                        ?>
-                                        <img src="<?php echo $avatar; ?>" style="width:40px; height:40px; border-radius:50%; object-fit:cover; margin-right:12px; border:1px solid #eee;">
-                                        
-                                        <div>
-                                            <div style="font-weight:600; color:#333;"><?php echo $row['full_name']; ?></div>
-                                            <div style="font-size:0.8rem; color:#888;">ID: <?php echo $row['teacher_id_no'] ? $row['teacher_id_no'] : 'N/A'; ?></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td>
-                                    <div style="font-size:0.9rem;"><i class="fas fa-phone" style="color:#ccc;"></i> <?php echo $row['phone'] ? $row['phone'] : '-'; ?></div>
-                                    <div style="font-size:0.8rem; color:#888;">@<?php echo $row['username']; ?></div>
-                                </td>
-                                <td>
-                                    <?php 
-                                        $badgeColor = '#eee'; $textColor = '#333';
-                                        if($row['role']=='admin') { $badgeColor='#333'; $textColor='#fff'; }
-                                        if($row['role']=='class_teacher') { $badgeColor='#FFD700'; $textColor='#fff'; }
-                                        if($row['role']=='subject_teacher') { $badgeColor='#f0f8ff'; $textColor='#2980b9'; }
-                                    ?>
-                                    <span style="background:<?php echo $badgeColor; ?>; color:<?php echo $textColor; ?>; padding:4px 8px; border-radius:4px; font-size:0.75rem; font-weight:bold; text-transform:uppercase;">
-                                        <?php echo str_replace('_', ' ', $row['role']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <?php if($row['teaching_subjects']): ?>
-                                        <div style="font-size:0.85rem; color:#555; max-width:250px; line-height:1.4;">
-                                            <?php echo $row['teaching_subjects']; ?>
-                                        </div>
-                                    <?php elseif($row['role'] != 'admin'): ?>
-                                        <span style="color:#ccc; font-style:italic; font-size:0.85rem;">No subjects assigned</span>
-                                    <?php else: ?>
-                                        <span style="color:#ccc;">-</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td style="text-align:right;">
-                                    <a href="view_user.php?user_id=<?php echo $row['user_id']; ?>" class="btn btn-primary btn-sm" title="View Profile" style="background:#5bc0de;">
-                                        <i class="fas fa-eye"></i>
-                                    </a>
-                                    
-                                    <a href="edit_user.php?user_id=<?php echo $row['user_id']; ?>" class="btn btn-primary btn-sm" title="Edit" style="background:#f0ad4e;">
-                                        <i class="fas fa-edit"></i>
-                                    </a>
-
-                                    <?php if($row['user_id'] != $_SESSION['user_id']): ?>
-                                    <a href="manage_users.php?delete_id=<?php echo $row['user_id']; ?>" class="btn btn-danger btn-sm" title="Delete" onclick="return confirm('Are you sure you want to remove this user?');">
-                                        <i class="fas fa-trash"></i>
-                                    </a>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                            <?php endwhile; ?>
-                        <?php else: ?>
-                            <tr><td colspan="5" style="text-align:center; padding:30px; color:#888;">No users found matching your criteria.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+                <button onclick="toggleForm()" class="btn btn-warning fw-bold text-dark shadow-sm">
+                    <i class="fas fa-plus-circle me-2"></i> Add New Staff
+                </button>
             </div>
+
+            <?php if(isset($success)): ?>
+                <div class="alert alert-success d-flex align-items-center mb-4"><i class="fas fa-check-circle me-2"></i> <?php echo $success; ?></div>
+            <?php endif; ?>
+            <?php if(isset($error)): ?>
+                <div class="alert alert-danger d-flex align-items-center mb-4"><i class="fas fa-exclamation-circle me-2"></i> <?php echo $error; ?></div>
+            <?php endif; ?>
+            <?php if(isset($_GET['msg']) && $_GET['msg']=='deleted'): ?>
+                <div class="alert alert-success d-flex align-items-center mb-4"><i class="fas fa-trash-alt me-2"></i> User account deleted.</div>
+            <?php endif; ?>
+
+            <div class="card border-0 shadow-sm mb-4" id="addUserForm" style="display:none;">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h5 class="fw-bold text-dark m-0"><i class="fas fa-user-plus text-warning me-2"></i> Create New Profile</h5>
+                        <button type="button" class="btn-close" onclick="toggleForm()"></button>
+                    </div>
+                    
+                    <form method="POST" autocomplete="off">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">Full Name</label>
+                                <input type="text" name="full_name" class="form-control" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">Role</label>
+                                <select name="role" class="form-select">
+                                    <option value="subject_teacher">Subject Teacher</option>
+                                    <option value="class_teacher">Class Teacher</option>
+                                    <option value="admin">Administrator</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">Staff ID / Teacher No</label>
+                                <input type="text" name="teacher_id_no" class="form-control" placeholder="e.g. T-2025-001">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">IC Number</label>
+                                <input type="text" name="ic_no" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">Phone Contact</label>
+                                <input type="text" name="phone" class="form-control">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">Login Username</label>
+                                <input type="text" name="username" class="form-control" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">Password</label>
+                                <input type="password" name="password" class="form-control" required>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-end mt-4">
+                            <button type="button" class="btn btn-light me-2" onclick="toggleForm()">Cancel</button>
+                            <button type="submit" name="add_user" class="btn btn-warning fw-bold text-dark px-4">Create User</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-3">
+                    <form method="GET" class="row g-2">
+                        <div class="col-md-3">
+                            <select name="role" class="form-select">
+                                <option value="">All Roles</option>
+                                <option value="subject_teacher" <?php echo ($filter_role=='subject_teacher')?'selected':''; ?>>Subject Teacher</option>
+                                <option value="class_teacher" <?php echo ($filter_role=='class_teacher')?'selected':''; ?>>Class Teacher</option>
+                                <option value="admin" <?php echo ($filter_role=='admin')?'selected':''; ?>>Admin</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <span class="input-group-text bg-light"><i class="fas fa-search text-muted"></i></span>
+                                <input type="text" name="search" class="form-control" placeholder="Search by Name or ID..." value="<?php echo $search_query; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-3 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary fw-bold flex-grow-1">Filter</button>
+                            <?php if($filter_role || $search_query): ?>
+                                <a href="manage_users.php" class="btn btn-secondary flex-grow-1">Reset</a>
+                            <?php endif; ?>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th class="ps-4">Staff Info</th>
+                                    <th>Contact</th>
+                                    <th>Role</th>
+                                    <th>Teaching Subjects</th>
+                                    <th class="text-end pe-4">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if($users->num_rows > 0): ?>
+                                    <?php while($row = $users->fetch_assoc()): ?>
+                                    <tr>
+                                        <td class="ps-4">
+                                            <div class="d-flex align-items-center">
+                                                <?php $avatar = $row['avatar'] ? "../uploads/".$row['avatar'] : "https://ui-avatars.com/api/?name=".$row['full_name']."&background=random"; ?>
+                                                <img src="<?php echo $avatar; ?>" class="avatar-sm">
+                                                <div>
+                                                    <div class="fw-bold text-dark"><?php echo $row['full_name']; ?></div>
+                                                    <div class="small text-muted">ID: <?php echo $row['teacher_id_no'] ? $row['teacher_id_no'] : 'N/A'; ?></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="small"><i class="fas fa-phone text-muted me-1"></i> <?php echo $row['phone'] ? $row['phone'] : '-'; ?></div>
+                                            <div class="small text-muted">@<?php echo $row['username']; ?></div>
+                                        </td>
+                                        <td>
+                                            <?php 
+                                                $badgeClass = "bg-secondary";
+                                                if($row['role']=='admin') $badgeClass = "bg-dark";
+                                                if($row['role']=='class_teacher') $badgeClass = "bg-warning text-dark";
+                                                if($row['role']=='subject_teacher') $badgeClass = "bg-info text-white";
+                                            ?>
+                                            <span class="badge <?php echo $badgeClass; ?> text-uppercase"><?php echo str_replace('_', ' ', $row['role']); ?></span>
+                                        </td>
+                                        <td>
+                                            <?php if($row['teaching_subjects']): ?>
+                                                <small class="text-muted text-truncate d-block" style="max-width: 200px;" title="<?php echo $row['teaching_subjects']; ?>">
+                                                    <?php echo $row['teaching_subjects']; ?>
+                                                </small>
+                                            <?php elseif($row['role'] != 'admin'): ?>
+                                                <span class="small text-muted fst-italic">No subjects assigned</span>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="text-end pe-4">
+                                            <a href="view_user.php?user_id=<?php echo $row['user_id']; ?>" class="btn btn-sm btn-outline-primary me-1" title="View"><i class="fas fa-eye"></i></a>
+                                            <a href="edit_user.php?user_id=<?php echo $row['user_id']; ?>" class="btn btn-sm btn-outline-warning text-dark me-1" title="Edit"><i class="fas fa-edit"></i></a>
+                                            <?php if($row['user_id'] != $_SESSION['user_id']): ?>
+                                                <a href="manage_users.php?delete_id=<?php echo $row['user_id']; ?>" class="btn btn-sm btn-outline-danger" title="Delete" onclick="return confirm('Are you sure you want to remove this user?');"><i class="fas fa-trash"></i></a>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr><td colspan="5" class="text-center py-5 text-muted">No users found matching your criteria.</td></tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -235,7 +264,6 @@ function toggleForm() {
     var x = document.getElementById("addUserForm");
     if (x.style.display === "none") {
         x.style.display = "block";
-        // Scroll to form
         x.scrollIntoView({behavior: "smooth"});
     } else {
         x.style.display = "none";
@@ -243,13 +271,6 @@ function toggleForm() {
 }
 </script>
 
-<style>
-    .alert-box { padding:15px; border-radius:4px; margin-bottom:20px; font-weight:500; }
-    .alert-box.success { background:#e8f5e9; color:#2e7d32; border:1px solid #c3e6cb; }
-    .alert-box.error { background:#ffebee; color:#c62828; border:1px solid #f5c6cb; }
-    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
-    .btn-secondary { background: #e0e0e0; color: #333; }
-    .btn-secondary:hover { background: #d0d0d0; }
-</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

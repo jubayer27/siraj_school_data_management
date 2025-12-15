@@ -1,176 +1,241 @@
 <?php
+session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// --- 1. HANDLE DELETE ---
+// 1. SECURITY
+if($_SESSION['role'] != 'admin') { header("Location: ../index.php"); exit(); }
+
+// 2. HANDLE DELETE
 if(isset($_GET['delete_id'])){
-    $did = $_GET['delete_id'];
-    $del = $conn->query("DELETE FROM classes WHERE class_id = $did");
-    if($del){
-        echo "<script>window.location='manage_classes.php?msg=deleted';</script>";
+    $did = intval($_GET['delete_id']);
+    
+    // Check if class has students
+    $check_stu = $conn->query("SELECT count(*) as c FROM students WHERE class_id = $did")->fetch_assoc();
+    
+    if($check_stu['c'] > 0){
+        $error = "Cannot delete class. It currently has <strong>".$check_stu['c']."</strong> active students. Please reassign them first.";
     } else {
-        $error = "Could not delete class. It might have students assigned.";
+        $del = $conn->query("DELETE FROM classes WHERE class_id = $did");
+        if($del){
+            echo "<script>window.location='manage_classes.php?msg=deleted';</script>";
+        } else {
+            $error = "Database error: " . $conn->error;
+        }
     }
 }
 
-// --- 2. HANDLE ADD / UPDATE ---
-$edit_mode = false;
-$edit_data = ['class_name'=>'', 'year'=>date('Y'), 'class_teacher_id'=>'', 'class_id'=>''];
-
-// Check if Edit Button was clicked
-if(isset($_GET['edit_id'])){
-    $edit_mode = true;
-    $eid = $_GET['edit_id'];
-    $edit_query = $conn->query("SELECT * FROM classes WHERE class_id = $eid");
-    $edit_data = $edit_query->fetch_assoc();
-}
-
-if(isset($_POST['save_class'])){
+// 3. HANDLE CREATE NEW CLASS
+if(isset($_POST['create_class'])){
     $name = $_POST['class_name'];
     $year = $_POST['year'];
-    $tid = $_POST['teacher_id'];
+    $tid = !empty($_POST['teacher_id']) ? $_POST['teacher_id'] : NULL;
     
-    if(!empty($_POST['class_id'])){
-        // UPDATE EXISTING
-        $cid = $_POST['class_id'];
-        $stmt = $conn->prepare("UPDATE classes SET class_name=?, year=?, class_teacher_id=? WHERE class_id=?");
-        $stmt->bind_param("siii", $name, $year, $tid, $cid);
-        if($stmt->execute()) $msg = "Class updated successfully!";
-        else $error = "Error updating class.";
+    // Check duplicate
+    $dup = $conn->query("SELECT class_id FROM classes WHERE class_name = '$name' AND year = '$year'");
+    if($dup->num_rows > 0){
+        $error = "A class with this name and year already exists.";
     } else {
-        // CREATE NEW
         $stmt = $conn->prepare("INSERT INTO classes (class_name, year, class_teacher_id) VALUES (?, ?, ?)");
         $stmt->bind_param("sii", $name, $year, $tid);
-        if($stmt->execute()) $msg = "New class created successfully!";
-        else $error = "Error creating class.";
+        
+        if($stmt->execute()){
+            $msg = "New class created successfully!";
+            // Clear post to prevent resubmission
+            echo "<script>setTimeout(function(){ window.location='manage_classes.php'; }, 1000);</script>";
+        } else {
+            $error = "Error creating class: " . $conn->error;
+        }
     }
-    // Refresh to clear edit mode
-    if(!isset($error)) echo "<script>setTimeout(function(){ window.location='manage_classes.php'; }, 1000);</script>";
 }
 
-// --- 3. FETCH DATA ---
-// Get Class Teachers for Dropdown
+// 4. FETCH DATA
+// Teachers for Dropdown
 $teachers = $conn->query("SELECT user_id, full_name FROM users WHERE role='class_teacher'");
 
-// Get Classes List with Teacher Name and Student Count
-$sql = "SELECT c.*, u.full_name, 
-        (SELECT COUNT(*) FROM students WHERE class_id = c.class_id) as student_count 
+// Classes List with Stats
+$sql = "SELECT c.*, u.full_name, u.avatar,
+        (SELECT COUNT(*) FROM students WHERE class_id = c.class_id) as student_count,
+        (SELECT COUNT(*) FROM subjects WHERE class_id = c.class_id) as subject_count
         FROM classes c 
         LEFT JOIN users u ON c.class_teacher_id = u.user_id 
         ORDER BY c.year DESC, c.class_name ASC";
 $classes = $conn->query($sql);
 ?>
 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+<style>
+    body { background-color: #f4f6f9; overflow-x: hidden; }
+    
+    .main-content {
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important; margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important; display: block !important;
+    }
+    .container-fluid { padding: 30px !important; }
+
+    /* Cards */
+    .manage-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+    .card-header-custom { background: white; padding: 20px 25px; border-bottom: 1px solid #f0f0f0; }
+
+    /* Teacher Avatar */
+    .avatar-sm { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; margin-right: 8px; border: 1px solid #eee; }
+
+    /* Table */
+    .table-hover tbody tr:hover { background-color: #ffffed; }
+    .table td { vertical-align: middle; }
+    
+    /* Form */
+    .form-control:focus, .form-select:focus { border-color: #DAA520; box-shadow: 0 0 0 3px rgba(218, 165, 32, 0.15); }
+
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
+</style>
+
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="page-header">
-            <h1>Manage Classes</h1>
-            <p>Create classes, assign teachers, and manage enrollments.</p>
-        </div>
-
-        <?php if(isset($_GET['msg']) && $_GET['msg']=='deleted') echo "<div style='padding:15px; background:#ffebee; color:#c62828; border-radius:5px; margin-bottom:20px;'>Class deleted successfully.</div>"; ?>
-        <?php if(isset($msg)) echo "<div style='padding:15px; background:#e8f5e9; color:#2e7d32; border-radius:5px; margin-bottom:20px;'>$msg</div>"; ?>
-        <?php if(isset($error)) echo "<div style='padding:15px; background:#ffebee; color:#c62828; border-radius:5px; margin-bottom:20px;'>$error</div>"; ?>
-
-        <div class="card">
-            <h3 style="margin-top:0; border-bottom:1px solid #f0f0f0; padding-bottom:10px;">
-                <?php echo $edit_mode ? "Edit Class: <span style='color:#DAA520'>".$edit_data['class_name']."</span>" : "Create New Class"; ?>
-            </h3>
+        <div class="container-fluid">
             
-            <form method="POST" class="form-grid" style="display:flex; gap:15px; align-items:flex-end;">
-                <input type="hidden" name="class_id" value="<?php echo $edit_data['class_id']; ?>">
-                
-                <div style="flex:2;">
-                    <label>Class Name</label>
-                    <input type="text" name="class_name" placeholder="e.g. 5 Science A" value="<?php echo $edit_data['class_name']; ?>" required>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Manage Classes</h2>
+                    <p class="text-secondary mb-0">Academic Structure & Allocations</p>
                 </div>
+            </div>
+
+            <?php if(isset($_GET['msg']) && $_GET['msg']=='deleted'): ?>
+                <div class="alert alert-success d-flex align-items-center"><i class="fas fa-trash-alt me-2"></i> Class deleted successfully.</div>
+            <?php endif; ?>
+            <?php if(isset($msg)): ?>
+                <div class="alert alert-success d-flex align-items-center"><i class="fas fa-check-circle me-2"></i> <?php echo $msg; ?></div>
+            <?php endif; ?>
+            <?php if(isset($error)): ?>
+                <div class="alert alert-danger d-flex align-items-center"><i class="fas fa-exclamation-circle me-2"></i> <?php echo $error; ?></div>
+            <?php endif; ?>
+
+            <div class="row g-4">
                 
-                <div style="flex:1;">
-                    <label>Academic Year</label>
-                    <input type="number" name="year" placeholder="2025" value="<?php echo $edit_data['year']; ?>" required>
-                </div>
-                
-                <div style="flex:2;">
-                    <label>Assign Class Teacher</label>
-                    <select name="teacher_id" required>
-                        <option value="">-- Select Teacher --</option>
-                        <?php 
-                        // Reset pointer for loop
-                        $teachers->data_seek(0);
-                        while($t = $teachers->fetch_assoc()): 
-                            $selected = ($t['user_id'] == $edit_data['class_teacher_id']) ? 'selected' : '';
-                        ?>
-                            <option value="<?php echo $t['user_id']; ?>" <?php echo $selected; ?>><?php echo $t['full_name']; ?></option>
-                        <?php endwhile; ?>
-                    </select>
+                <div class="col-lg-4">
+                    <div class="card manage-card h-100">
+                        <div class="card-header-custom">
+                            <h5 class="fw-bold m-0 text-dark"><i class="fas fa-plus-circle text-warning me-2"></i> Create New Class</h5>
+                        </div>
+                        <div class="card-body p-4">
+                            <form method="POST">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold small text-muted text-uppercase">Class Name</label>
+                                    <input type="text" name="class_name" class="form-control" placeholder="e.g. 5 Amanah" required>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold small text-muted text-uppercase">Academic Year</label>
+                                    <input type="number" name="year" class="form-control" value="<?php echo date('Y'); ?>" required>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label fw-bold small text-muted text-uppercase">Assign Class Mentor</label>
+                                    <select name="teacher_id" class="form-select">
+                                        <option value="">-- Select Teacher --</option>
+                                        <?php 
+                                        $teachers->data_seek(0);
+                                        while($t = $teachers->fetch_assoc()): 
+                                        ?>
+                                            <option value="<?php echo $t['user_id']; ?>"><?php echo $t['full_name']; ?></option>
+                                        <?php endwhile; ?>
+                                    </select>
+                                    <div class="form-text">Optional. Can be assigned later.</div>
+                                </div>
+                                
+                                <div class="d-grid">
+                                    <button type="submit" name="create_class" class="btn btn-warning fw-bold text-dark py-2">
+                                        <i class="fas fa-save me-2"></i> Create Class
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
                 </div>
 
-                <div style="padding-bottom:1px;">
-                    <?php if($edit_mode): ?>
-                        <button type="submit" name="save_class" class="btn btn-primary">Update Class</button>
-                        <a href="manage_classes.php" class="btn btn-danger" style="background:#888;">Cancel</a>
-                    <?php else: ?>
-                        <button type="submit" name="save_class" class="btn btn-primary">Create Class</button>
-                    <?php endif; ?>
+                <div class="col-lg-8">
+                    <div class="card manage-card h-100">
+                        <div class="card-header-custom d-flex justify-content-between align-items-center">
+                            <h5 class="fw-bold m-0 text-dark">Active Classes Directory</h5>
+                            <span class="badge bg-light text-dark border"><?php echo $classes->num_rows; ?> Classes</span>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead class="bg-light">
+                                        <tr>
+                                            <th class="ps-4">Class Name</th>
+                                            <th>Year</th>
+                                            <th>Class Mentor</th>
+                                            <th class="text-center">Students</th>
+                                            <th class="text-center">Subjects</th>
+                                            <th class="text-end pe-4">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if($classes->num_rows > 0): ?>
+                                            <?php while($row = $classes->fetch_assoc()): ?>
+                                            <tr>
+                                                <td class="ps-4">
+                                                    <span class="fw-bold text-dark fs-6"><?php echo $row['class_name']; ?></span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-warning text-dark"><?php echo $row['year']; ?></span>
+                                                </td>
+                                                <td>
+                                                    <?php if($row['full_name']): ?>
+                                                        <div class="d-flex align-items-center">
+                                                            <?php $avatar = $row['avatar'] ? "../uploads/".$row['avatar'] : "https://ui-avatars.com/api/?name=".$row['full_name']."&background=random"; ?>
+                                                            <img src="<?php echo $avatar; ?>" class="avatar-sm">
+                                                            <span class="small fw-semibold"><?php echo $row['full_name']; ?></span>
+                                                        </div>
+                                                    <?php else: ?>
+                                                        <span class="badge bg-secondary-subtle text-secondary small">Unassigned</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="badge bg-info-subtle text-info-emphasis rounded-pill px-3">
+                                                        <?php echo $row['student_count']; ?>
+                                                    </span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="small text-muted"><?php echo $row['subject_count']; ?></span>
+                                                </td>
+                                                <td class="text-end pe-4">
+                                                    <a href="edit_class.php?class_id=<?php echo $row['class_id']; ?>" 
+                                                       class="btn btn-outline-primary btn-sm me-1" title="Edit">
+                                                        <i class="fas fa-edit"></i>
+                                                    </a>
+                                                    <a href="manage_classes.php?delete_id=<?php echo $row['class_id']; ?>" 
+                                                       class="btn btn-outline-danger btn-sm" 
+                                                       onclick="return confirm('WARNING: Are you sure? This action cannot be undone.');"
+                                                       title="Delete">
+                                                        <i class="fas fa-trash"></i>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                            <?php endwhile; ?>
+                                        <?php else: ?>
+                                            <tr><td colspan="6" class="text-center py-5 text-muted">No classes found. Create one to get started.</td></tr>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </form>
-        </div>
 
-        <div class="card">
-            <h3>Active Classes Directory</h3>
-            <div class="table-responsive">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Class Name</th>
-                            <th>Year</th>
-                            <th>Class Teacher</th>
-                            <th>Students</th>
-                            <th style="text-align:right;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if($classes->num_rows > 0): ?>
-                            <?php while($row = $classes->fetch_assoc()): ?>
-                            <tr>
-                                <td>
-    <a href="view_class.php?class_id=<?php echo $row['class_id']; ?>" style="font-weight:600; color:#DAA520; text-decoration:none;">
-        <?php echo $row['class_name']; ?>
-    </a>
-</td>
-                                <td><span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:0.85rem;"><?php echo $row['year']; ?></span></td>
-                                <td>
-                                    <?php 
-                                    if($row['full_name']) echo "<i class='fas fa-chalkboard-teacher' style='color:#DAA520; margin-right:5px;'></i> " . $row['full_name'];
-                                    else echo "<span style='color:#bbb;'>Unassigned</span>";
-                                    ?>
-                                </td>
-                                <td>
-                                    <span style="font-weight:bold;"><?php echo $row['student_count']; ?></span>
-                                </td>
-                                <td style="text-align:right;">
-                                    
-                                    
-                                    <a href="edit_class.php?class_id=<?php echo $row['class_id']; ?>" class="btn btn-primary btn-sm" title="Edit Class" style="background:#f0ad4e;">
-    <i class="fas fa-edit"></i>
-</a>
-                                    
-                                    <a href="manage_classes.php?delete_id=<?php echo $row['class_id']; ?>" class="btn btn-danger btn-sm" title="Delete Class" onclick="return confirm('Are you sure? This will unassign all students in this class.');">
-                                        <i class="fas fa-trash"></i>
-                                    </a>
-                                </td>
-                            </tr>
-                            <?php endwhile; ?>
-                        <?php else: ?>
-                            <tr><td colspan="5" style="text-align:center; padding:20px; color:#888;">No classes found. Please create one above.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
             </div>
         </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

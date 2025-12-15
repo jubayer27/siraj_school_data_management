@@ -3,7 +3,11 @@ session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// 1. CHECK ID
+// 1. SECURITY & ID CHECK
+if(!isset($_SESSION['role']) || $_SESSION['role'] != 'admin'){
+    header("Location: ../index.php"); exit();
+}
+
 if(!isset($_GET['user_id'])){
     echo "<script>window.location='manage_users.php';</script>";
     exit();
@@ -21,199 +25,179 @@ if(!$user) die("User not found.");
 $class_assigned = $conn->query("SELECT * FROM classes WHERE class_teacher_id = $uid")->fetch_assoc();
 
 // B. Subjects Taught
-$subjects = $conn->query("SELECT s.*, c.class_name FROM subjects s 
+$subjects = $conn->query("SELECT s.*, c.class_name 
+                          FROM subjects s 
                           JOIN classes c ON s.class_id = c.class_id 
-                          WHERE s.teacher_id = $uid");
+                          WHERE s.teacher_id = $uid 
+                          ORDER BY c.class_name, s.subject_name");
 ?>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<style>
+    body { background-color: #f4f6f9; overflow-x: hidden; }
+    
+    .main-content {
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important;
+        display: block !important;
+    }
+    .container-fluid { padding: 30px !important; }
+
+    /* Profile Sidebar */
+    .profile-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); overflow: hidden; }
+    .profile-header-bg { height: 100px; background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%); }
+    .avatar-wrapper { margin-top: -50px; text-align: center; }
+    .avatar-xl { width: 100px; height: 100px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); object-fit: cover; }
+    
+    /* Role Badges */
+    .badge-role { font-size: 0.75rem; padding: 5px 12px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .role-admin { background: #333; color: #fff; }
+    .role-class-teacher { background: #FFD700; color: #fff; }
+    .role-subject-teacher { background: #e3f2fd; color: #1976d2; }
+
+    /* Info Cards */
+    .info-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); margin-bottom: 20px; }
+    .card-header-custom { background: white; padding: 15px 20px; border-bottom: 1px solid #f0f0f0; font-weight: 700; color: #555; display: flex; justify-content: space-between; align-items: center; }
+    
+    /* Lists */
+    .info-list-item { padding: 12px 0; border-bottom: 1px dashed #eee; display: flex; justify-content: space-between; align-items: center; }
+    .info-list-item:last-child { border-bottom: none; }
+    .label-text { font-size: 0.85rem; color: #888; font-weight: 600; text-transform: uppercase; }
+    .value-text { font-weight: 500; color: #333; }
+
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
+</style>
 
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="page-header">
-            <div>
-                <h1>Staff Profile</h1>
-                <p>Viewing details for: <strong><?php echo $user['full_name']; ?></strong></p>
-            </div>
-            <a href="manage_users.php" class="btn btn-secondary" style="background:#e0e0e0; color:#333;">
-                <i class="fas fa-arrow-left"></i> Back to Directory
-            </a>
-        </div>
-
-        <div class="profile-layout">
+        <div class="container-fluid">
             
-            <div class="profile-sidebar">
-                <div class="card center-content">
-                    <div class="avatar-container">
-                        <?php 
-                            // Check for uploaded avatar, else use UI Avatars API
-                            $avatar = $user['avatar'] ? "../uploads/".$user['avatar'] : "https://ui-avatars.com/api/?name=".$user['full_name']."&background=f9f9f9&color=DAA520&size=150"; 
-                        ?>
-                        <img src="<?php echo $avatar; ?>" alt="Profile">
-                    </div>
-                    <h2 class="profile-name"><?php echo $user['full_name']; ?></h2>
-                    
-                    <?php 
-                        // Badge Logic
-                        $role_display = strtoupper(str_replace('_', ' ', $user['role']));
-                        $badge_class = 'badge-default';
-                        if($user['role'] == 'admin') $badge_class = 'badge-admin';
-                        if($user['role'] == 'class_teacher') $badge_class = 'badge-class';
-                        if($user['role'] == 'subject_teacher') $badge_class = 'badge-subject';
-                    ?>
-                    <span class="role-badge <?php echo $badge_class; ?>"><?php echo $role_display; ?></span>
-
-                    <div class="profile-meta">
-                        <div class="meta-row">
-                            <i class="fas fa-id-badge"></i> 
-                            <span><?php echo $user['teacher_id_no'] ? $user['teacher_id_no'] : 'N/A'; ?></span>
-                        </div>
-                        <div class="meta-row">
-                            <i class="fas fa-envelope"></i> 
-                            <span>@<?php echo $user['username']; ?></span>
-                        </div>
-                        <div class="meta-row">
-                            <i class="fas fa-phone-alt"></i> 
-                            <span><?php echo $user['phone'] ? $user['phone'] : 'No Phone'; ?></span>
-                        </div>
-                         <div class="meta-row">
-                            <i class="fas fa-calendar-alt"></i> 
-                            <span>Joined <?php echo date('M Y', strtotime($user['created_at'])); ?></span>
-                        </div>
-                    </div>
-
-                    <a href="edit_user.php?user_id=<?php echo $user['user_id']; ?>" class="btn btn-primary btn-block">
-                        <i class="fas fa-user-edit"></i> Edit Profile
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Staff Profile</h2>
+                    <p class="text-secondary mb-0">Staff ID: <strong><?php echo $user['teacher_id_no'] ? $user['teacher_id_no'] : 'N/A'; ?></strong></p>
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <a href="manage_users.php" class="btn btn-light shadow-sm border">
+                        <i class="fas fa-arrow-left me-2"></i> Back
+                    </a>
+                    <a href="edit_user.php?user_id=<?php echo $uid; ?>" class="btn btn-warning fw-bold shadow-sm">
+                        <i class="fas fa-user-edit me-2"></i> Edit Profile
                     </a>
                 </div>
             </div>
 
-            <div class="profile-main">
+            <div class="row g-4">
                 
-                <?php if($user['role'] == 'class_teacher'): ?>
-                <div class="card highlight-card">
-                    <div class="card-icon"><i class="fas fa-crown"></i></div>
-                    <div class="card-content">
-                        <h3>Class Mentor Assignment</h3>
-                        <?php if($class_assigned): ?>
-                            <div class="assignment-box">
-                                <div class="assignment-details">
-                                    <span class="class-name"><?php echo $class_assigned['class_name']; ?></span>
-                                    <span class="academic-year">Year: <?php echo $class_assigned['year']; ?></span>
-                                </div>
-                                <a href="view_class.php?class_id=<?php echo $class_assigned['class_id']; ?>" class="btn btn-sm btn-outline">View Class</a>
+                <div class="col-lg-4">
+                    <div class="card profile-card mb-4">
+                        <div class="profile-header-bg"></div>
+                        <div class="card-body pt-0 text-center">
+                            <div class="avatar-wrapper">
+                                <?php $avatar = $user['avatar'] ? "../uploads/".$user['avatar'] : "https://ui-avatars.com/api/?name=".$user['full_name']."&background=random"; ?>
+                                <img src="<?php echo $avatar; ?>" class="avatar-xl">
                             </div>
-                        <?php else: ?>
-                            <p class="empty-state">No class assigned yet.</p>
-                        <?php endif; ?>
+                            <h4 class="mt-3 mb-1 fw-bold"><?php echo $user['full_name']; ?></h4>
+                            <p class="text-muted mb-2">@<?php echo $user['username']; ?></p>
+                            
+                            <?php 
+                                $r = $user['role'];
+                                $badge = ($r=='admin') ? 'role-admin' : (($r=='class_teacher') ? 'role-class-teacher' : 'role-subject-teacher');
+                            ?>
+                            <span class="badge badge-role <?php echo $badge; ?>"><?php echo str_replace('_', ' ', $r); ?></span>
+
+                            <hr class="my-4">
+
+                            <div class="text-start px-2">
+                                <div class="info-list-item">
+                                    <span class="label-text"><i class="fas fa-phone me-2"></i> Phone</span>
+                                    <span class="value-text"><?php echo $user['phone'] ? $user['phone'] : '-'; ?></span>
+                                </div>
+                                <div class="info-list-item">
+                                    <span class="label-text"><i class="fas fa-id-card me-2"></i> IC No</span>
+                                    <span class="value-text"><?php echo $user['ic_no'] ? $user['ic_no'] : '-'; ?></span>
+                                </div>
+                                <div class="info-list-item">
+                                    <span class="label-text"><i class="fas fa-calendar me-2"></i> Joined</span>
+                                    <span class="value-text"><?php echo date('M Y', strtotime($user['created_at'])); ?></span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <?php endif; ?>
 
-                <div class="card">
-                    <div class="section-header">
-                        <h3><i class="fas fa-book-reader" style="color:#DAA520;"></i> Teaching Load</h3>
-                    </div>
+                <div class="col-lg-8">
                     
-                    <div class="table-responsive">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Subject Name</th>
-                                    <th>Subject Code</th>
-                                    <th>Assigned Class</th>
-                                    <th style="text-align:right;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if($subjects->num_rows > 0): ?>
-                                    <?php while($sub = $subjects->fetch_assoc()): ?>
-                                    <tr>
-                                        <td style="font-weight:600; color:#333;"><?php echo $sub['subject_name']; ?></td>
-                                        <td><span class="code-badge"><?php echo $sub['subject_code']; ?></span></td>
-                                        <td><?php echo $sub['class_name']; ?></td>
-                                        <td style="text-align:right;">
-                                            <a href="../subjectTeacher/view_students.php?subject_id=<?php echo $sub['subject_id']; ?>" class="btn-link">View Students</a>
-                                        </td>
-                                    </tr>
-                                    <?php endwhile; ?>
+                    <?php if($user['role'] == 'class_teacher'): ?>
+                    <div class="card info-card border-start border-4 border-warning">
+                        <div class="card-body p-4 d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 class="fw-bold text-dark mb-1"><i class="fas fa-chalkboard-teacher text-warning me-2"></i> Class Mentor Assignment</h5>
+                                <?php if($class_assigned): ?>
+                                    <p class="mb-0 text-muted">Currently managing: <strong><?php echo $class_assigned['class_name']; ?></strong> (Year <?php echo $class_assigned['year']; ?>)</p>
                                 <?php else: ?>
-                                    <tr><td colspan="4" class="empty-table">No subjects assigned to this teacher.</td></tr>
+                                    <p class="mb-0 text-danger fst-italic">No class assigned yet.</p>
                                 <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="section-header">
-                         <h3><i class="fas fa-info-circle" style="color:#aaa;"></i> Personal Details</h3>
-                    </div>
-                    <div class="details-grid">
-                        <div class="detail-item">
-                            <label>IC / Passport No</label>
-                            <div><?php echo $user['ic_no'] ? $user['ic_no'] : '-'; ?></div>
-                        </div>
-                         <div class="detail-item">
-                            <label>Account Status</label>
-                            <div><span style="color:green; font-weight:bold;">Active</span></div>
+                            </div>
+                            <?php if($class_assigned): ?>
+                                <a href="view_class.php?class_id=<?php echo $class_assigned['class_id']; ?>" class="btn btn-outline-warning text-dark btn-sm fw-bold">View Class</a>
+                            <?php endif; ?>
                         </div>
                     </div>
-                </div>
+                    <?php endif; ?>
 
+                    <div class="card info-card">
+                        <div class="card-header-custom">
+                            <span><i class="fas fa-book-reader text-primary me-2"></i> Subject Load</span>
+                            <span class="badge bg-light text-dark border"><?php echo $subjects->num_rows; ?> Subjects</span>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead class="bg-light">
+                                        <tr>
+                                            <th class="ps-4">Subject</th>
+                                            <th>Code</th>
+                                            <th>Class</th>
+                                            <th class="text-end pe-4">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if($subjects->num_rows > 0): ?>
+                                            <?php while($sub = $subjects->fetch_assoc()): ?>
+                                            <tr>
+                                                <td class="ps-4 fw-bold text-dark"><?php echo $sub['subject_name']; ?></td>
+                                                <td><span class="badge bg-light text-dark border font-monospace"><?php echo $sub['subject_code']; ?></span></td>
+                                                <td><span class="fw-bold text-warning"><?php echo $sub['class_name']; ?></span></td>
+                                                <td class="text-end pe-4">
+                                                    <a href="view_subject.php?subject_id=<?php echo $sub['subject_id']; ?>" class="btn btn-sm btn-outline-primary">
+                                                        View Subject
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                            <?php endwhile; ?>
+                                        <?php else: ?>
+                                            <tr><td colspan="4" class="text-center py-5 text-muted">No teaching subjects assigned.</td></tr>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
             </div>
+
         </div>
     </div>
 </div>
 
-<style>
-    /* Layout */
-    .profile-layout { display: grid; grid-template-columns: 320px 1fr; gap: 25px; align-items: start; }
-    @media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; } }
-
-    /* Profile Sidebar */
-    .center-content { text-align: center; }
-    .avatar-container { width: 140px; height: 140px; margin: 0 auto 20px; border-radius: 50%; padding: 5px; border: 1px solid #eee; }
-    .avatar-container img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
-    .profile-name { margin: 10px 0 5px; font-size: 1.5rem; color: #333; }
-    
-    /* Roles Badges */
-    .role-badge { padding: 5px 15px; border-radius: 20px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; margin-bottom: 25px; }
-    .badge-admin { background: #333; color: #fff; }
-    .badge-class { background: #FFD700; color: #fff; }
-    .badge-subject { background: #e3f2fd; color: #1976d2; }
-
-    /* Meta Info */
-    .profile-meta { text-align: left; margin-bottom: 25px; border-top: 1px solid #f0f0f0; padding-top: 20px; }
-    .meta-row { display: flex; align-items: center; margin-bottom: 12px; color: #555; font-size: 0.95rem; }
-    .meta-row i { width: 25px; color: #ccc; text-align: center; margin-right: 10px; }
-    .btn-block { display: block; width: 100%; text-align: center; box-sizing: border-box; }
-
-    /* Cards & Assignments */
-    .highlight-card { border-left: 5px solid #FFD700; display: flex; align-items: center; padding: 20px; }
-    .card-icon { font-size: 2.5rem; color: #FFD700; margin-right: 20px; opacity: 0.8; }
-    .card-content { flex: 1; }
-    .card-content h3 { margin: 0 0 10px 0; font-size: 1.1rem; color: #555; }
-    
-    .assignment-box { display: flex; justify-content: space-between; align-items: center; background: #fffcf0; padding: 10px 15px; border-radius: 6px; border: 1px solid #ffe082; }
-    .class-name { font-weight: bold; font-size: 1.1rem; color: #333; display: block; }
-    .academic-year { font-size: 0.85rem; color: #777; }
-    .btn-outline { border: 1px solid #DAA520; color: #DAA520; background: transparent; padding: 5px 12px; }
-    .btn-outline:hover { background: #DAA520; color: white; }
-    .empty-state { color: #888; font-style: italic; margin: 0; }
-
-    /* Table Styles */
-    .section-header { border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 15px; }
-    .section-header h3 { margin: 0; font-size: 1.1rem; }
-    .code-badge { background: #f0f0f0; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem; font-family: monospace; color: #555; }
-    .btn-link { color: #3498db; text-decoration: none; font-size: 0.9rem; font-weight: 500; }
-    .btn-link:hover { text-decoration: underline; }
-    .empty-table { text-align: center; padding: 30px; color: #999; font-style: italic; }
-
-    /* Details Grid */
-    .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .detail-item label { display: block; font-size: 0.8rem; color: #999; text-transform: uppercase; margin-bottom: 5px; }
-    .detail-item div { font-size: 1rem; color: #333; font-weight: 500; }
-</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

@@ -3,7 +3,11 @@ session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// 1. CHECK ID
+// 1. SECURITY & ID CHECK
+if(!isset($_SESSION['role']) || $_SESSION['role'] != 'admin'){
+    header("Location: ../index.php"); exit();
+}
+
 if(!isset($_GET['subject_id'])){
     echo "<script>window.location='manage_subjects.php';</script>";
     exit();
@@ -11,7 +15,7 @@ if(!isset($_GET['subject_id'])){
 $sid = $_GET['subject_id'];
 
 // 2. FETCH SUBJECT DETAILS
-$sql = "SELECT s.*, c.class_name, c.year, u.full_name as teacher_name, u.phone, u.avatar 
+$sql = "SELECT s.*, c.class_name, c.year, u.full_name as teacher_name, u.phone, u.avatar, u.user_id as teacher_id 
         FROM subjects s 
         LEFT JOIN classes c ON s.class_id = c.class_id 
         LEFT JOIN users u ON s.teacher_id = u.user_id 
@@ -30,113 +34,153 @@ $students = $conn->query($stu_sql);
 $enrolled_count = $students->num_rows;
 ?>
 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<style>
+    body { background-color: #f4f6f9; overflow-x: hidden; }
+    
+    /* Layout Fix */
+    .main-content {
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important;
+        display: block !important;
+    }
+    .container-fluid { padding: 30px !important; }
+
+    /* Profile Cards */
+    .subject-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); overflow: hidden; background: white; }
+    .subject-icon-box { background: #fffcf5; padding: 40px 0; text-align: center; border-bottom: 1px dashed #eee; }
+    
+    /* Teacher Avatar */
+    .avatar-md { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-right: 15px; }
+    
+    /* Table Styling */
+    .table-hover tbody tr:hover { background-color: #fcfcfc; }
+    
+    /* Code Badge */
+    .code-badge { background: #333; color: white; padding: 5px 12px; border-radius: 6px; font-family: monospace; letter-spacing: 1px; font-size: 0.9rem; }
+
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
+</style>
+
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="page-header">
-            <div>
-                <h1>Subject Profile</h1>
-                <p>Viewing: <strong><?php echo $sub['subject_name']; ?></strong> (<?php echo $sub['subject_code']; ?>)</p>
-            </div>
-            <a href="manage_subjects.php" class="btn btn-secondary" style="background:#e0e0e0; color:#333;">
-                <i class="fas fa-arrow-left"></i> Back to List
-            </a>
-        </div>
-
-        <div class="profile-layout">
+        <div class="container-fluid">
             
-            <div class="profile-sidebar">
-                <div class="card center-content">
-                    <div style="font-size:3rem; color:#DAA520; margin-bottom:10px;">
-                        <i class="fas fa-book-open"></i>
-                    </div>
-                    <h2 class="profile-name"><?php echo $sub['subject_name']; ?></h2>
-                    <span class="code-badge"><?php echo $sub['subject_code']; ?></span>
-
-                    <div class="profile-meta">
-                        <div class="meta-row">
-                            <i class="fas fa-chalkboard"></i>
-                            <span>Class: <strong><?php echo $sub['class_name']; ?></strong></span>
-                        </div>
-                        <div class="meta-row">
-                            <i class="fas fa-calendar"></i>
-                            <span>Year: <?php echo $sub['year']; ?></span>
-                        </div>
-                        <div class="meta-row">
-                            <i class="fas fa-user-graduate"></i>
-                            <span>Enrolled: <strong><?php echo $enrolled_count; ?></strong></span>
-                        </div>
-                    </div>
-
-                    <a href="edit_subject.php?subject_id=<?php echo $sub['subject_id']; ?>" class="btn btn-primary btn-block">
-                        <i class="fas fa-edit"></i> Edit Subject
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Subject Profile</h2>
+                    <p class="text-secondary mb-0">Overview for <strong><?php echo $sub['subject_name']; ?></strong></p>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="manage_subjects.php" class="btn btn-light shadow-sm border">
+                        <i class="fas fa-arrow-left me-2"></i> Back
+                    </a>
+                    <a href="edit_subject.php?subject_id=<?php echo $sid; ?>" class="btn btn-warning fw-bold shadow-sm">
+                        <i class="fas fa-edit me-2"></i> Edit Subject
                     </a>
                 </div>
-
-                <div class="card">
-                    <div class="section-header">
-                        <h3>Assigned Teacher</h3>
-                    </div>
-                    <?php if($sub['teacher_name']): ?>
-                        <div style="display:flex; align-items:center; gap:15px;">
-                            <?php 
-                                $avatar = $sub['avatar'] ? "../uploads/".$sub['avatar'] : "https://ui-avatars.com/api/?name=".$sub['teacher_name']."&background=f0f0f0&color=333";
-                            ?>
-                            <img src="<?php echo $avatar; ?>" style="width:50px; height:50px; border-radius:50%; object-fit:cover;">
-                            <div>
-                                <div style="font-weight:bold; color:#333;"><?php echo $sub['teacher_name']; ?></div>
-                                <div style="font-size:0.85rem; color:#888;"><i class="fas fa-phone"></i> <?php echo $sub['phone'] ? $sub['phone'] : 'N/A'; ?></div>
-                            </div>
-                        </div>
-                        <div style="margin-top:15px; text-align:center;">
-                            <a href="view_user.php?user_id=<?php echo $sub['teacher_id']; ?>" class="btn-link">View Teacher Profile</a>
-                        </div>
-                    <?php else: ?>
-                        <p style="color:#999; font-style:italic;">No teacher assigned.</p>
-                    <?php endif; ?>
-                </div>
             </div>
 
-            <div class="profile-main">
+            <div class="row g-4">
                 
-                <div class="card">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:1px solid #f0f0f0; padding-bottom:15px;">
-                        <h3 style="margin:0;"><i class="fas fa-users" style="color:#DAA520;"></i> Student Roster</h3>
-                        <a href="../subjectTeacher/manage_marks.php?subject_id=<?php echo $sid; ?>" class="btn btn-primary btn-sm">
-                            <i class="fas fa-star-half-alt"></i> Manage Marks
-                        </a>
+                <div class="col-lg-4">
+                    
+                    <div class="card subject-card mb-4">
+                        <div class="subject-icon-box">
+                            <i class="fas fa-book-open text-warning fa-4x mb-3"></i>
+                            <h4 class="fw-bold text-dark mb-2"><?php echo $sub['subject_name']; ?></h4>
+                            <span class="code-badge"><?php echo $sub['subject_code']; ?></span>
+                        </div>
+                        <div class="card-body p-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                                <span class="text-muted text-uppercase small fw-bold"><i class="fas fa-chalkboard me-2"></i> Class</span>
+                                <span class="fw-bold text-dark"><?php echo $sub['class_name']; ?></span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                                <span class="text-muted text-uppercase small fw-bold"><i class="fas fa-calendar-alt me-2"></i> Year</span>
+                                <span class="fw-bold text-dark"><?php echo $sub['year']; ?></span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-muted text-uppercase small fw-bold"><i class="fas fa-users me-2"></i> Enrolled</span>
+                                <span class="badge bg-success-subtle text-success fs-6 px-3"><?php echo $enrolled_count; ?></span>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="table-responsive">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Reg No</th>
-                                    <th>Student Name</th>
-                                    <th>Gender</th>
-                                    <th>Enrolled Date</th>
-                                    <th style="text-align:right;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if($students->num_rows > 0): ?>
-                                    <?php while($stu = $students->fetch_assoc()): ?>
-                                    <tr>
-                                        <td><span style="background:#f9f9f9; padding:3px 8px; border-radius:4px; font-size:0.85rem;"><?php echo $stu['school_register_no']; ?></span></td>
-                                        <td style="font-weight:600; color:#333;"><?php echo $stu['student_name']; ?></td>
-                                        <td><?php echo $stu['gender']; ?></td>
-                                        <td style="color:#888; font-size:0.9rem;"><?php echo date('d M Y', strtotime($stu['enrollment_date'])); ?></td>
-                                        <td style="text-align:right;">
-                                            <a href="../public/student_view.php?student_id=<?php echo $stu['student_id']; ?>" class="btn-link">View Profile</a>
-                                        </td>
-                                    </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr><td colspan="5" class="empty-table">No students currently enrolled in this subject.</td></tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+                    <div class="card subject-card">
+                        <div class="card-header bg-white py-3 border-bottom fw-bold text-dark">
+                            <i class="fas fa-user-tie text-primary me-2"></i> Assigned Teacher
+                        </div>
+                        <div class="card-body p-4">
+                            <?php if($sub['teacher_name']): ?>
+                                <div class="d-flex align-items-center mb-3">
+                                    <?php $avatar = $sub['avatar'] ? "../uploads/".$sub['avatar'] : "https://ui-avatars.com/api/?name=".$sub['teacher_name']; ?>
+                                    <img src="<?php echo $avatar; ?>" class="avatar-md">
+                                    <div>
+                                        <div class="fw-bold text-dark"><?php echo $sub['teacher_name']; ?></div>
+                                        <small class="text-muted"><i class="fas fa-phone me-1"></i> <?php echo $sub['phone'] ? $sub['phone'] : 'N/A'; ?></small>
+                                    </div>
+                                </div>
+                                <a href="view_user.php?user_id=<?php echo $sub['teacher_id']; ?>" class="btn btn-outline-primary w-100 btn-sm">View Profile</a>
+                            <?php else: ?>
+                                <div class="text-center py-3 text-muted fst-italic">
+                                    <i class="fas fa-exclamation-circle me-1"></i> No teacher assigned yet.
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="card subject-card h-100">
+                        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                            <h5 class="fw-bold m-0 text-dark"><i class="fas fa-list text-success me-2"></i> Student Roster</h5>
+                            <a href="manage_all_marks.php?subject_id=<?php echo $sid; ?>&class_id=<?php echo $sub['class_id']; ?>" class="btn btn-sm btn-primary">
+                                <i class="fas fa-pen-alt me-1"></i> Manage Marks
+                            </a>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 600px; overflow-y:auto;">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead class="bg-light sticky-top">
+                                        <tr>
+                                            <th class="ps-4">Reg No</th>
+                                            <th>Student Name</th>
+                                            <th>Gender</th>
+                                            <th>Enrolled Date</th>
+                                            <th class="text-end pe-4">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if($students->num_rows > 0): ?>
+                                            <?php while($stu = $students->fetch_assoc()): ?>
+                                            <tr>
+                                                <td class="ps-4">
+                                                    <span class="badge bg-light text-dark border font-monospace"><?php echo $stu['school_register_no']; ?></span>
+                                                </td>
+                                                <td class="fw-bold text-dark"><?php echo $stu['student_name']; ?></td>
+                                                <td><?php echo $stu['gender']; ?></td>
+                                                <td class="text-muted small"><?php echo date('d M Y', strtotime($stu['enrollment_date'])); ?></td>
+                                                <td class="text-end pe-4">
+                                                    <a href="view_student.php?student_id=<?php echo $stu['student_id']; ?>" class="btn btn-sm btn-info text-white">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                            <?php endwhile; ?>
+                                        <?php else: ?>
+                                            <tr><td colspan="5" class="text-center py-5 text-muted">No students currently enrolled in this subject.</td></tr>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -145,25 +189,6 @@ $enrolled_count = $students->num_rows;
     </div>
 </div>
 
-<style>
-    /* Layout Logic (Matches view_user) */
-    .profile-layout { display: grid; grid-template-columns: 300px 1fr; gap: 25px; align-items: start; }
-    @media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; } }
-
-    .center-content { text-align: center; }
-    .profile-name { margin: 10px 0 5px; font-size: 1.4rem; color: #333; }
-    .code-badge { background: #333; color: #fff; padding: 4px 10px; border-radius: 4px; font-family: monospace; font-size: 0.9rem; letter-spacing: 1px; }
-
-    .profile-meta { text-align: left; margin: 20px 0; border-top: 1px solid #f0f0f0; padding-top: 15px; }
-    .meta-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.95rem; color: #555; }
-    .meta-row i { color: #ccc; width: 20px; }
-    
-    .section-header { border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 15px; }
-    .section-header h3 { margin: 0; font-size: 1.1rem; color: #555; }
-    
-    .btn-block { display: block; width: 100%; text-align: center; box-sizing: border-box; }
-    .btn-link { color: #3498db; text-decoration: none; font-size: 0.85rem; font-weight: 500; }
-    .empty-table { text-align: center; padding: 40px; color: #999; font-style: italic; }
-</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

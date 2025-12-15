@@ -3,258 +3,353 @@ session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-// 1. SECURITY & VALIDATION
-if($_SESSION['role'] != 'admin') { header("Location: ../index.php"); exit(); }
-if(!isset($_GET['user_id'])){ echo "<script>window.location='manage_users.php';</script>"; exit; }
+// 1. SECURITY & ID CHECK
+if (!isset($_SESSION['role']) || $_SESSION['role'] != 'admin') {
+    header("Location: ../index.php");
+    exit();
+}
+
+if (!isset($_GET['user_id'])) {
+    echo "<script>window.location='manage_users.php';</script>";
+    exit;
+}
 
 $uid = $_GET['user_id'];
+$success = "";
+$error = "";
 
 // 2. HANDLE FORM SUBMISSION
-if(isset($_POST['update_user'])){
+if (isset($_POST['update_user'])) {
     $name = $_POST['full_name'];
     $role = $_POST['role'];
     $staff_id = $_POST['teacher_id_no'];
     $phone = $_POST['phone'];
     $ic = $_POST['ic_no'];
     $username = $_POST['username'];
-    
-    // Check for Duplicate Username (excluding current user)
+
+    // Check Duplicate Username
     $dupCheck = $conn->query("SELECT user_id FROM users WHERE username='$username' AND user_id != $uid");
-    if($dupCheck->num_rows > 0){
-        $error = "Username '$username' is already taken by another user.";
+
+    if ($dupCheck->num_rows > 0) {
+        $error = "Username '$username' is already taken.";
     } else {
         // A. Handle Avatar Upload
-        $avatar_sql = ""; 
-        if(isset($_FILES['avatar']['name']) && $_FILES['avatar']['name'] != ""){
+        $avatar_sql = "";
+        if (isset($_FILES['avatar']['name']) && $_FILES['avatar']['name'] != "") {
             $target_dir = "../uploads/";
-            if(!is_dir($target_dir)) mkdir($target_dir); // Create dir if not exists
-            
+            if (!is_dir($target_dir)) mkdir($target_dir);
+
             $file_ext = strtolower(pathinfo($_FILES["avatar"]["name"], PATHINFO_EXTENSION));
             $new_filename = uniqid("user_") . "." . $file_ext;
-            $target_file = $target_dir . $new_filename;
-            
-            if(move_uploaded_file($_FILES["avatar"]["tmp_name"], $target_file)){
+
+            if (move_uploaded_file($_FILES["avatar"]["tmp_name"], $target_dir . $new_filename)) {
                 $avatar_sql = ", avatar='$new_filename'";
             }
         }
 
         // B. Handle Password Update
         $pass_sql = "";
-        if(!empty($_POST['password'])){
+        if (!empty($_POST['password'])) {
             $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
             $pass_sql = ", password='$new_pass'";
         }
 
-        // C. Execute Update
+        // C. Execute Profile Update
         $sql = "UPDATE users SET full_name=?, role=?, teacher_id_no=?, phone=?, ic_no=?, username=? $pass_sql $avatar_sql WHERE user_id=?";
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("ssssssi", $name, $role, $staff_id, $phone, $ic, $username, $uid);
-        
-        if($stmt->execute()){
-            $success = "Profile updated successfully!";
-            // Auto-refresh to show changes
-            echo "<script>setTimeout(function(){ window.location.href = window.location.href; }, 1500);</script>";
-        } else {
-            $error = "Database Error: " . $conn->error;
+        $stmt->execute();
+
+        // ---------------------------------------------------------
+        // D. HANDLE SUBJECT ASSIGNMENTS (New Logic)
+        // ---------------------------------------------------------
+        // Only if role is NOT admin (admins don't teach usually, but logic allows it)
+        if ($role != 'admin') {
+            // 1. Reset: Remove this teacher from ALL subjects first
+            $conn->query("UPDATE subjects SET teacher_id = NULL WHERE teacher_id = $uid");
+
+            // 2. Assign: Update selected subjects to this teacher
+            if (isset($_POST['assigned_subjects']) && !empty($_POST['assigned_subjects'])) {
+                $subject_ids = $_POST['assigned_subjects']; // Array of IDs
+                
+                // Sanitize array to comma separated string of integers
+                $ids_string = implode(",", array_map('intval', $subject_ids));
+                
+                $conn->query("UPDATE subjects SET teacher_id = $uid WHERE subject_id IN ($ids_string)");
+            }
         }
+
+        $success = "User profile and subject assignments updated successfully!";
+        echo "<script>setTimeout(function(){ window.location.href = window.location.href; }, 1500);</script>";
     }
 }
 
 // 3. FETCH USER DATA
 $user = $conn->query("SELECT * FROM users WHERE user_id = $uid")->fetch_assoc();
-if(!$user) die("User not found.");
+if (!$user) die("User not found.");
 
-// 4. FETCH CONTEXT (Teaching Load)
-$subjects_taught = $conn->query("SELECT s.subject_name, s.subject_code, c.class_name FROM subjects s JOIN classes c ON s.class_id = c.class_id WHERE s.teacher_id = $uid");
+// 4. FETCH CONTEXT
 $class_managed = $conn->query("SELECT class_name, year FROM classes WHERE class_teacher_id = $uid")->fetch_assoc();
+
+// 5. FETCH ALL SUBJECTS FOR SELECTION (Grouped by Class)
+// We get Subject details + Current Teacher Name (to show if it's taken)
+$all_subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, s.teacher_id, 
+                     c.class_name, u.full_name as current_teacher
+                     FROM subjects s 
+                     JOIN classes c ON s.class_id = c.class_id 
+                     LEFT JOIN users u ON s.teacher_id = u.user_id
+                     ORDER BY c.year DESC, c.class_name ASC, s.subject_name ASC";
+$all_subjects_res = $conn->query($all_subjects_sql);
+
+// Organize subjects by Class Name for display
+$subjects_by_class = [];
+while($row = $all_subjects_res->fetch_assoc()){
+    $subjects_by_class[$row['class_name']][] = $row;
+}
 ?>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<style>
+    body { background-color: #f4f6f9; overflow-x: hidden; }
+    .main-content {
+        position: absolute; top: 0; right: 0;
+        width: calc(100% - 260px) !important; margin-left: 260px !important;
+        min-height: 100vh; padding: 0 !important; display: block !important;
+    }
+    .container-fluid { padding: 30px !important; }
+
+    /* Avatar & Card Styles */
+    .avatar-upload { position: relative; max-width: 150px; margin: 0 auto 20px; }
+    .avatar-preview { width: 150px; height: 150px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); overflow: hidden; }
+    .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+    .avatar-edit { position: absolute; right: 0; bottom: 10px; }
+    .avatar-edit input { display: none; }
+    .avatar-edit label { width: 36px; height: 36px; background: #DAA520; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 2px solid white; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
+
+    .edit-card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02); margin-bottom: 20px; }
+    .section-title { font-size: 1rem; color: #DAA520; font-weight: 700; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 20px; }
+    
+    .role-badge { background: #eee; color: #555; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.5px; }
+    
+    /* Subject List Styles */
+    .subject-list-container { max-height: 400px; overflow-y: auto; padding-right: 5px; }
+    .class-group-header { background: #f8f9fa; padding: 8px 10px; font-weight: bold; color: #555; border-radius: 6px; margin-top: 10px; margin-bottom: 5px; font-size: 0.9rem; }
+    .subject-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+    .subject-item:hover { background-color: #fffcf5; }
+    .taken-badge { font-size: 0.75rem; color: #e74c3c; background: #fadbd8; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
+    
+    /* Input Icons */
+    .input-icon { position: relative; }
+    .input-icon i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #aaa; }
+    .form-control, .form-select { padding-left: 38px; border-radius: 8px; }
+    .form-control:focus { border-color: #FFD700; box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1); }
+
+    @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
+</style>
 
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
-    
+
     <div class="main-content">
-        <div class="page-header">
-            <div>
-                <h1>Edit User Profile</h1>
-                <p>Managing account for: <strong><?php echo $user['full_name']; ?></strong></p>
+        <div class="container-fluid">
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Edit User Profile</h2>
+                    <p class="text-secondary mb-0">Managing: <strong><?php echo $user['full_name']; ?></strong></p>
+                </div>
+                <a href="manage_users.php" class="btn btn-light border shadow-sm">
+                    <i class="fas fa-arrow-left me-2"></i> Back to Directory
+                </a>
             </div>
-            <a href="manage_users.php" class="btn btn-secondary" style="background:#e0e0e0; color:#333;">
-                <i class="fas fa-arrow-left"></i> Back to Directory
-            </a>
+
+            <?php if ($success): ?>
+                <div class="alert alert-success d-flex align-items-center mb-4"><i class="fas fa-check-circle me-2"></i> <?php echo $success; ?></div>
+            <?php endif; ?>
+            <?php if ($error): ?>
+                <div class="alert alert-danger d-flex align-items-center mb-4"><i class="fas fa-exclamation-circle me-2"></i> <?php echo $error; ?></div>
+            <?php endif; ?>
+
+            <form method="POST" enctype="multipart/form-data" autocomplete="off">
+                <div class="row g-4">
+
+                    <div class="col-lg-3">
+                        <div class="card edit-card text-center p-4">
+                            <div class="avatar-upload">
+                                <div class="avatar-preview">
+                                    <?php $img = $user['avatar'] ? "../uploads/" . $user['avatar'] : "https://ui-avatars.com/api/?name=" . $user['full_name'] . "&background=random"; ?>
+                                    <img id="imagePreview" src="<?php echo $img; ?>">
+                                </div>
+                                <div class="avatar-edit">
+                                    <input type='file' name="avatar" id="imageUpload" accept=".png, .jpg, .jpeg" />
+                                    <label for="imageUpload"><i class="fas fa-camera"></i></label>
+                                </div>
+                            </div>
+                            <h5 class="fw-bold mb-1"><?php echo $user['full_name']; ?></h5>
+                            <span class="role-badge"><?php echo strtoupper(str_replace('_', ' ', $user['role'])); ?></span>
+
+                            <hr class="my-4">
+
+                            <div class="text-start">
+                                <?php if ($user['role'] == 'class_teacher'): ?>
+                                    <h6 class="fw-bold text-muted small text-uppercase mb-2"><i class="fas fa-crown me-1 text-warning"></i> Class Mentor</h6>
+                                    <div class="p-2 bg-light rounded border border-warning">
+                                        <?php if($class_managed): ?>
+                                            <div class="fw-bold text-dark"><?php echo $class_managed['class_name']; ?></div>
+                                            <small class="text-muted">Year <?php echo $class_managed['year']; ?></small>
+                                        <?php else: ?>
+                                            <span class="text-muted small">No class assigned.</span>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-5">
+                        <div class="card edit-card h-100">
+                            <div class="card-body p-4">
+                                <div class="section-title">Personal Details</div>
+                                <div class="row g-3 mb-4">
+                                    <div class="col-12">
+                                        <label class="form-label fw-bold small text-muted">Full Name</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-user"></i>
+                                            <input type="text" name="full_name" class="form-control" value="<?php echo $user['full_name']; ?>" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold small text-muted">Staff ID</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-id-badge"></i>
+                                            <input type="text" name="teacher_id_no" class="form-control" value="<?php echo $user['teacher_id_no']; ?>">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold small text-muted">IC Number</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-id-card"></i>
+                                            <input type="text" name="ic_no" class="form-control" value="<?php echo $user['ic_no']; ?>">
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label fw-bold small text-muted">Phone Number</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-phone"></i>
+                                            <input type="text" name="phone" class="form-control" value="<?php echo $user['phone']; ?>">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="section-title">Account Access</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold small text-muted">Role</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-user-tag"></i>
+                                            <select name="role" class="form-select">
+                                                <option value="subject_teacher" <?php echo ($user['role'] == 'subject_teacher') ? 'selected' : ''; ?>>Subject Teacher</option>
+                                                <option value="class_teacher" <?php echo ($user['role'] == 'class_teacher') ? 'selected' : ''; ?>>Class Teacher</option>
+                                                <option value="admin" <?php echo ($user['role'] == 'admin') ? 'selected' : ''; ?>>Admin</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold small text-muted">Username</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-sign-in-alt"></i>
+                                            <input type="text" name="username" class="form-control" value="<?php echo $user['username']; ?>" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label fw-bold small text-muted">New Password</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-lock"></i>
+                                            <input type="password" name="password" class="form-control" placeholder="Leave empty to keep current">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card edit-card h-100">
+                            <div class="card-body p-4">
+                                <div class="section-title">
+                                    <i class="fas fa-book-reader me-2"></i> Subject Allocation
+                                </div>
+                                <p class="small text-muted mb-3">Check the subjects assigned to this teacher. Unchecking will remove the assignment.</p>
+                                
+                                <div class="subject-list-container border rounded p-2 bg-white">
+                                    <?php 
+                                    if(empty($subjects_by_class)): 
+                                        echo "<p class='text-center text-muted py-3'>No classes/subjects found.</p>";
+                                    else:
+                                        foreach($subjects_by_class as $class_name => $subs): 
+                                    ?>
+                                        <div class="class-group-header"><?php echo $class_name; ?></div>
+                                        <?php foreach($subs as $s): 
+                                            // Is this subject assigned to CURRENT user being edited?
+                                            $is_assigned = ($s['teacher_id'] == $uid);
+                                            // Is it assigned to SOMEONE ELSE?
+                                            $is_taken = ($s['teacher_id'] && $s['teacher_id'] != $uid);
+                                        ?>
+                                        <div class="subject-item">
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" 
+                                                       name="assigned_subjects[]" 
+                                                       value="<?php echo $s['subject_id']; ?>" 
+                                                       id="sub_<?php echo $s['subject_id']; ?>"
+                                                       <?php echo $is_assigned ? 'checked' : ''; ?>>
+                                                <label class="form-check-label small" for="sub_<?php echo $s['subject_id']; ?>">
+                                                    <strong><?php echo $s['subject_name']; ?></strong>
+                                                    <span class="text-muted" style="font-size:0.75rem;">(<?php echo $s['subject_code']; ?>)</span>
+                                                </label>
+                                            </div>
+                                            <?php if($is_taken): ?>
+                                                <span class="taken-badge" title="Currently assigned to <?php echo $s['current_teacher']; ?>">
+                                                    <i class="fas fa-user-lock"></i> Taken
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <?php endforeach; ?>
+                                    <?php endforeach; endif; ?>
+                                </div>
+                                
+                                <div class="mt-2 small text-end text-muted fst-italic">
+                                    * Checking a "Taken" subject will reassign it to this user.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12 text-end mb-5">
+                        <a href="manage_users.php" class="btn btn-secondary px-4 me-2">Cancel</a>
+                        <button type="submit" name="update_user" class="btn btn-warning fw-bold px-5">
+                            <i class="fas fa-save me-2"></i> Save All Changes
+                        </button>
+                    </div>
+
+                </div>
+            </form>
         </div>
-
-        <?php if(isset($success)) echo "<div class='alert-box success'><i class='fas fa-check-circle'></i> $success</div>"; ?>
-        <?php if(isset($error)) echo "<div class='alert-box error'><i class='fas fa-exclamation-circle'></i> $error</div>"; ?>
-
-        <form method="POST" enctype="multipart/form-data" autocomplete="off">
-            <div class="profile-grid">
-                
-                <div class="col-left">
-                    <div class="card center-content">
-                        <div class="avatar-upload">
-                            <div class="avatar-preview">
-                                <?php $img = $user['avatar'] ? "../uploads/".$user['avatar'] : "https://ui-avatars.com/api/?name=".$user['full_name']."&background=FFD700&color=fff"; ?>
-                                <img id="imagePreview" src="<?php echo $img; ?>" alt="User Avatar">
-                            </div>
-                            <div class="avatar-edit">
-                                <input type='file' name="avatar" id="imageUpload" accept=".png, .jpg, .jpeg" />
-                                <label for="imageUpload"><i class="fas fa-camera"></i> Change Photo</label>
-                            </div>
-                        </div>
-                        <h3 style="margin:15px 0 5px;"><?php echo $user['full_name']; ?></h3>
-                        <span class="role-badge"><?php echo strtoupper(str_replace('_', ' ', $user['role'])); ?></span>
-                    </div>
-
-                    <div class="card info-card">
-                        <h4><i class="fas fa-briefcase" style="color:#DAA520;"></i> Current Assignments</h4>
-                        
-                        <?php if($user['role'] == 'class_teacher' && $class_managed): ?>
-                            <div class="assignment-item">
-                                <strong>Class Mentor:</strong><br>
-                                <?php echo $class_managed['class_name']; ?> (<?php echo $class_managed['year']; ?>)
-                            </div>
-                        <?php endif; ?>
-
-                        <div class="assignment-item">
-                            <strong>Subjects Taught:</strong>
-                            <ul style="padding-left:20px; margin:5px 0; color:#666;">
-                            <?php if($subjects_taught->num_rows > 0): ?>
-                                <?php while($sub = $subjects_taught->fetch_assoc()): ?>
-                                    <li><?php echo $sub['subject_name']; ?> <small>(<?php echo $sub['class_name']; ?>)</small></li>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <li><i>No subjects assigned.</i></li>
-                            <?php endif; ?>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-right">
-                    <div class="card">
-                        <div class="section-title">Personal Details</div>
-                        <div class="form-grid-2">
-                            <div class="form-group">
-                                <label>Full Name</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-user"></i>
-                                    <input type="text" name="full_name" value="<?php echo $user['full_name']; ?>" required>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Staff ID / Code</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-id-badge"></i>
-                                    <input type="text" name="teacher_id_no" value="<?php echo $user['teacher_id_no']; ?>">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>IC Number</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-id-card"></i>
-                                    <input type="text" name="ic_no" value="<?php echo $user['ic_no']; ?>">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Phone Number</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-phone"></i>
-                                    <input type="text" name="phone" value="<?php echo $user['phone']; ?>">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="section-title" style="margin-top:30px;">System Access</div>
-                        <div class="form-grid-2">
-                            <div class="form-group">
-                                <label>System Role</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-user-tag"></i>
-                                    <select name="role">
-                                        <option value="subject_teacher" <?php if($user['role']=='subject_teacher') echo 'selected'; ?>>Subject Teacher</option>
-                                        <option value="class_teacher" <?php if($user['role']=='class_teacher') echo 'selected'; ?>>Class Teacher</option>
-                                        <option value="admin" <?php if($user['role']=='admin') echo 'selected'; ?>>Admin</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Login Username</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-sign-in-alt"></i>
-                                    <input type="text" name="username" value="<?php echo $user['username']; ?>" required>
-                                </div>
-                            </div>
-                            <div class="form-group full-width">
-                                <label>Change Password</label>
-                                <div class="input-icon">
-                                    <i class="fas fa-lock"></i>
-                                    <input type="password" name="password" placeholder="Enter new password only if changing it" autocomplete="new-password">
-                                </div>
-                                <small style="color:#888;">Leave empty to keep the current password.</small>
-                            </div>
-                        </div>
-
-                        <div class="form-actions">
-                            <button type="submit" name="update_user" class="btn btn-primary btn-lg">
-                                <i class="fas fa-save"></i> Save Changes
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </form>
     </div>
 </div>
 
 <script>
-document.getElementById('imageUpload').onchange = function (evt) {
-    var tgt = evt.target || window.event.srcElement,
-        files = tgt.files;
-    if (FileReader && files && files.length) {
-        var fr = new FileReader();
-        fr.onload = function () {
-            document.getElementById('imagePreview').src = fr.result;
+    // Avatar Preview
+    document.getElementById('imageUpload').onchange = function (evt) {
+        var tgt = evt.target || window.event.srcElement, files = tgt.files;
+        if (FileReader && files && files.length) {
+            var fr = new FileReader();
+            fr.onload = function () { document.getElementById('imagePreview').src = fr.result; }
+            fr.readAsDataURL(files[0]);
         }
-        fr.readAsDataURL(files[0]);
     }
-}
 </script>
 
-<style>
-    /* Layout */
-    .profile-grid { display: grid; grid-template-columns: 300px 1fr; gap: 25px; align-items: start; }
-    @media (max-width: 900px) { .profile-grid { grid-template-columns: 1fr; } }
-
-    /* Alerts */
-    .alert-box { padding: 15px; border-radius: 6px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
-    .alert-box.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .alert-box.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-
-    /* Avatar Upload */
-    .avatar-upload { position: relative; max-width: 150px; margin: 10px auto; }
-    .avatar-preview { width: 150px; height: 150px; position: relative; border-radius: 50%; border: 4px solid #f8f8f8; box-shadow: 0px 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
-    .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
-    .avatar-edit { position: absolute; right: 0; bottom: 0; }
-    .avatar-edit input { display: none; }
-    .avatar-edit label { display: inline-block; width: 34px; height: 34px; margin-bottom: 0; border-radius: 100%; background: #DAA520; color: white; border: 2px solid #fff; box-shadow: 0px 2px 4px 0px rgba(0,0,0,0.2); cursor: pointer; font-weight: normal; transition: all .2s ease-in-out; text-align: center; line-height: 34px; }
-    .avatar-edit label:hover { background: #f1c40f; }
-
-    /* Cards & Form */
-    .center-content { text-align: center; }
-    .role-badge { background: #eee; color: #555; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.5px; }
-    .info-card h4 { border-bottom: 1px solid #eee; padding-bottom: 10px; margin-top: 0; color: #444; }
-    .section-title { font-size: 1.1rem; font-weight: 600; color: #DAA520; margin-bottom: 15px; border-left: 4px solid #DAA520; padding-left: 10px; }
-    
-    .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .full-width { grid-column: 1 / -1; }
-    
-    .input-icon { position: relative; }
-    .input-icon i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #aaa; }
-    .input-icon input, .input-icon select { padding-left: 35px; width: 100%; }
-    
-    .form-actions { margin-top: 30px; text-align: right; border-top: 1px solid #eee; padding-top: 20px; }
-    .btn-lg { padding: 12px 30px; font-size: 1rem; }
-    .assignment-item { background: #fafafa; padding: 10px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #ddd; }
-</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
