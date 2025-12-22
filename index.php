@@ -55,34 +55,70 @@ if (isset($_POST['login'])) {
     <title>Sign-in - SIRAJ Portal</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* BASE STYLES matching your theme */
+        /* BASE STYLES */
         body {
-            background-color: #f4f6f9;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
             height: 100vh;
             margin: 0;
+            overflow: hidden;
+            /* Prevent scrollbars from blur edges */
+            position: relative;
+        }
+
+        /* BLURRED BACKGROUND IMAGE */
+        body::before {
+            content: "";
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            right: -10px;
+            bottom: -10px;
+            /* Extend slightly to hide blur edges */
+            background: url('assets/school.jpg') no-repeat center center fixed;
+            background-size: cover;
+            filter: blur(8px);
+            /* Adjust blur intensity here */
+            z-index: -2;
+        }
+
+        /* DARK OVERLAY (Optional - improves contrast) */
+        body::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4);
+            /* Darkens the background */
+            z-index: -1;
         }
 
         /* MAIN CARD */
         .box {
-            background: white;
+            background: rgba(255, 255, 255, 0.95);
+            /* Slight transparency */
             width: 100%;
             max-width: 400px;
             padding: 40px;
             border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
             border-top: 5px solid #FFD700;
-            /* Gold Top Border */
             text-align: center;
+            position: relative;
+            z-index: 1;
+            /* Ensures card sits above background */
         }
 
         /* LOGO & TITLE */
-        .box img {
-            width: 80px;
-            margin-bottom: 15px;
+        .logo-img {
+            width: 100px;
+            /* Adjusted size */
+            height: auto;
+            margin-bottom: 10px;
             display: block;
             margin-left: auto;
             margin-right: auto;
@@ -116,7 +152,6 @@ if (isset($_POST['login'])) {
         input[type="password"] {
             width: 100%;
             padding: 12px 12px 12px 45px;
-            /* Space for Icon */
             border: 1px solid #ddd;
             border-radius: 6px;
             box-sizing: border-box;
@@ -180,11 +215,11 @@ if (isset($_POST['login'])) {
             text-decoration: underline;
         }
 
-        /* FOOTER / SIGN UP AREA */
+        /* FOOTER */
         .inquire-box {
             margin-top: 30px;
             padding-top: 20px;
-            border-top: 1px dashed #eee;
+            border-top: 1px dashed #ccc;
         }
 
         .inquire-box .title {
@@ -198,7 +233,7 @@ if (isset($_POST['login'])) {
 
         .sign-up {
             background: white;
-            border: 2px solid #eee;
+            border: 2px solid #ccc;
             color: #555;
             padding: 8px 20px;
             border-radius: 20px;
@@ -217,7 +252,7 @@ if (isset($_POST['login'])) {
 <body>
 
     <div class="box">
-        <img src="assets/images/siraj-logo.png" alt="SIRAJ Logo" onerror="this.style.display='none'">
+        <img src="assets/siraj-logo.png" class="logo-img" alt="SIRAJ Logo" onerror="this.style.display='none'">
 
         <div class="title">Sign-in to SIRAJ</div>
 
@@ -245,13 +280,7 @@ if (isset($_POST['login'])) {
             <button type="submit" name="login" class="sign-in">Sign In</button>
         </form>
 
-        <div class="inquire-box">
-            <div class="title">Don't have an account?</div>
-            <button type="button" class="sign-up"
-                onclick="alert('Please contact the Administrator to register a new staff account.')">
-                Create Account
-            </button>
-        </div>
+
     </div>
 
 </body>

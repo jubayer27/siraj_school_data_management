@@ -2,9 +2,12 @@
 $current_page = basename($_SERVER['PHP_SELF']);
 ?>
 
-<div class="sidebar">
+<div class="sidebar" id="adminSidebar">
     <div class="brand">
-        <i class="fas fa-user-shield" style="font-size: 2rem; color: #FFD700; margin-bottom: 10px; display:block;"></i>
+        <div class="logo-circle">
+            <img src="../assets/siraj-logo.png" alt="School Logo" onerror="this.style.display='none'">
+        </div>
+
         <h3 style="margin:0; font-size:1.1rem; text-transform:uppercase; color:#fff;">
             Admin <span style="color:#FFD700;">Portal</span>
         </h3>
@@ -97,7 +100,17 @@ $current_page = basename($_SERVER['PHP_SELF']);
             </a>
         </li>
 
-        <li style="margin-top: 20px; border-top: 1px solid #3d4b60;">
+        <li class="menu-header">THEME PREFERENCE</li>
+        <li style="padding: 10px 25px;">
+            <div class="theme-selector">
+                <div class="theme-dot default" onclick="setTheme('default')" title="Default Blue"></div>
+                <div class="theme-dot dark" onclick="setTheme('dark')" title="Midnight Black"></div>
+                <div class="theme-dot purple" onclick="setTheme('purple')" title="Royal Purple"></div>
+                <div class="theme-dot teal" onclick="setTheme('teal')" title="Ocean Teal"></div>
+            </div>
+        </li>
+
+        <li style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
             <a href="../logout.php" style="color: #ff6b6b;">
                 <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
             </a>
@@ -106,27 +119,73 @@ $current_page = basename($_SERVER['PHP_SELF']);
 </div>
 
 <style>
-    /* Admin Sidebar Specific Styles */
+    /* 1. CSS Variables for Themes */
+    :root {
+        --sidebar-bg: #2c3e50;
+        --sidebar-hover: #34495e;
+        --sidebar-active-border: #FFD700;
+        --brand-bg: #233242;
+    }
+
+    /* Theme Classes (applied by JS) */
+    .sidebar.theme-dark {
+        --sidebar-bg: #1a1a2e;
+        --sidebar-hover: #16213e;
+        --brand-bg: #0f3460;
+    }
+
+    .sidebar.theme-purple {
+        --sidebar-bg: #4a148c;
+        --sidebar-hover: #6a1b9a;
+        --brand-bg: #38006b;
+    }
+
+    .sidebar.theme-teal {
+        --sidebar-bg: #00695c;
+        --sidebar-hover: #004d40;
+        --brand-bg: #003d33;
+    }
+
+    /* 2. Admin Sidebar Base Styles */
     .sidebar {
         width: 260px;
         height: 100vh;
-        background: #2c3e50;
-        /* Dark Blue-Grey Theme */
+        background: var(--sidebar-bg);
+        /* Use Variable */
         color: white;
         position: fixed;
         left: 0;
         top: 0;
         overflow-y: auto;
         z-index: 1000;
-        transition: all 0.3s;
+        transition: background 0.3s ease;
     }
 
     .brand {
         text-align: center;
-        padding: 30px 20px;
-        background: #233242;
-        /* Slightly darker header */
-        border-bottom: 1px solid #3d4b60;
+        padding: 25px 20px;
+        background: var(--brand-bg);
+        /* Use Variable */
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* 3. White Circle Logo Styling */
+    .logo-circle {
+        width: 90px;
+        height: 90px;
+        background: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 15px auto;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .logo-circle img {
+        width: 65px;
+        /* Adjust based on logo shape */
+        height: auto;
     }
 
     .menu {
@@ -147,15 +206,16 @@ $current_page = basename($_SERVER['PHP_SELF']);
     }
 
     .menu li a:hover {
-        background: #34495e;
+        background: var(--sidebar-hover);
+        /* Use Variable */
         color: white;
     }
 
     .menu li a.active {
-        background: #34495e;
+        background: var(--sidebar-hover);
+        /* Use Variable */
         color: white;
-        border-left-color: #FFD700;
-        /* Gold Highlight */
+        border-left-color: var(--sidebar-active-border);
     }
 
     .menu li a i {
@@ -167,22 +227,85 @@ $current_page = basename($_SERVER['PHP_SELF']);
         padding: 20px 25px 5px 25px;
         font-size: 0.75rem;
         font-weight: 700;
-        color: #5d7694;
+        color: #92aabf;
         text-transform: uppercase;
         letter-spacing: 1.5px;
     }
 
-    /* Scrollbar for Sidebar */
+    /* 4. Theme Dots Styling */
+    .theme-selector {
+        display: flex;
+        gap: 10px;
+    }
+
+    .theme-dot {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        transition: transform 0.2s;
+    }
+
+    .theme-dot:hover {
+        transform: scale(1.2);
+        border-color: #fff;
+    }
+
+    /* Dot Colors */
+    .theme-dot.default {
+        background: #2c3e50;
+    }
+
+    .theme-dot.dark {
+        background: #1a1a2e;
+    }
+
+    .theme-dot.purple {
+        background: #4a148c;
+    }
+
+    .theme-dot.teal {
+        background: #00695c;
+    }
+
+    /* Scrollbar */
     .sidebar::-webkit-scrollbar {
         width: 6px;
     }
 
     .sidebar::-webkit-scrollbar-thumb {
-        background: #3d4b60;
+        background: rgba(255, 255, 255, 0.2);
         border-radius: 3px;
     }
 
     .sidebar::-webkit-scrollbar-track {
-        background: #2c3e50;
+        background: transparent;
     }
 </style>
+
+<script>
+    // 5. JavaScript to Handle Theme Switching with Memory
+    function setTheme(themeName) {
+        const sidebar = document.getElementById('adminSidebar');
+
+        // Remove all theme classes first
+        sidebar.classList.remove('theme-dark', 'theme-purple', 'theme-teal');
+
+        // Add the specific theme class if not default
+        if (themeName !== 'default') {
+            sidebar.classList.add('theme-' + themeName);
+        }
+
+        // Save preference to LocalStorage (Persistent across refreshes)
+        localStorage.setItem('adminTheme', themeName);
+    }
+
+    // Immediately load the saved theme when the page loads
+    (function () {
+        const savedTheme = localStorage.getItem('adminTheme');
+        if (savedTheme) {
+            setTheme(savedTheme);
+        }
+    })();
+</script>
