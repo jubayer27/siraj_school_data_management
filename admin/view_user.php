@@ -21,14 +21,15 @@ $user = $u_query->fetch_assoc();
 if(!$user) die("User not found.");
 
 // 3. FETCH ASSIGNMENTS
-// A. Class Assigned (If Class Teacher)
+// A. Class Assigned (If Class Teacher) - Still one-to-one in classes table
 $class_assigned = $conn->query("SELECT * FROM classes WHERE class_teacher_id = $uid")->fetch_assoc();
 
-// B. Subjects Taught
+// B. Subjects Taught (UPDATED FOR MANY-TO-MANY)
 $subjects = $conn->query("SELECT s.*, c.class_name 
                           FROM subjects s 
+                          JOIN subject_teachers st ON s.subject_id = st.subject_id
                           JOIN classes c ON s.class_id = c.class_id 
-                          WHERE s.teacher_id = $uid 
+                          WHERE st.teacher_id = $uid 
                           ORDER BY c.class_name, s.subject_name");
 ?>
 

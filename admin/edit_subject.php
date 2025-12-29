@@ -23,12 +23,28 @@ if (isset($_POST['update_subject'])) {
     $name = $_POST['subject_name'];
     $code = $_POST['subject_code'];
     $cid = $_POST['class_id'];
-    $tid = $_POST['teacher_id'];
+    // Capture array of selected IDs
+    $teacher_ids = isset($_POST['teacher_ids']) ? $_POST['teacher_ids'] : [];
 
-    $stmt = $conn->prepare("UPDATE subjects SET subject_name=?, subject_code=?, class_id=?, teacher_id=? WHERE subject_id=?");
-    $stmt->bind_param("ssiii", $name, $code, $cid, $tid, $sid);
+    // A. Update Subject Details (Removed teacher_id from here)
+    $stmt = $conn->prepare("UPDATE subjects SET subject_name=?, subject_code=?, class_id=? WHERE subject_id=?");
+    $stmt->bind_param("ssii", $name, $code, $cid, $sid);
 
     if ($stmt->execute()) {
+
+        // B. Update Teachers (Delete Old -> Insert New)
+        // 1. Remove existing mapping
+        $conn->query("DELETE FROM subject_teachers WHERE subject_id = $sid");
+
+        // 2. Insert new mapping
+        if (!empty($teacher_ids)) {
+            $stmt_t = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
+            foreach ($teacher_ids as $tid) {
+                $stmt_t->bind_param("ii", $sid, $tid);
+                $stmt_t->execute();
+            }
+        }
+
         $success = "Subject updated successfully!";
         // Auto-redirect back to view page after 1.5 seconds
         echo "<script>setTimeout(function(){ window.location='view_subject.php?subject_id=$sid'; }, 1500);</script>";
@@ -38,9 +54,17 @@ if (isset($_POST['update_subject'])) {
 }
 
 // 3. FETCH DATA
+// Fetch Subject Basic Info
 $sub = $conn->query("SELECT * FROM subjects WHERE subject_id = $sid")->fetch_assoc();
 if (!$sub)
     die("Subject not found.");
+
+// Fetch Currently Assigned Teachers (For Pre-selection)
+$current_teacher_ids = [];
+$assigned_q = $conn->query("SELECT teacher_id FROM subject_teachers WHERE subject_id = $sid");
+while ($row = $assigned_q->fetch_assoc()) {
+    $current_teacher_ids[] = $row['teacher_id'];
+}
 
 // Fetch Dropdowns
 $classes = $conn->query("SELECT * FROM classes ORDER BY class_name");
@@ -229,22 +253,26 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
                             </div>
 
                             <div class="col-md-6">
-                                <label class="form-label">Assign Teacher</label>
+                                <label class="form-label">Assign Teachers</label>
                                 <div class="input-group">
                                     <span class="input-group-text bg-light"><i
                                             class="fas fa-chalkboard-teacher text-secondary"></i></span>
-                                    <select name="teacher_id" class="form-select" required>
-                                        <option value="">-- Select Teacher --</option>
+
+                                    <select name="teacher_ids[]" class="form-select" multiple size="4">
                                         <?php
                                         $teachers->data_seek(0);
                                         while ($t = $teachers->fetch_assoc()):
-                                            $sel = ($t['user_id'] == $sub['teacher_id']) ? 'selected' : '';
+                                            // Check if this teacher is in the assigned array
+                                            $sel = in_array($t['user_id'], $current_teacher_ids) ? 'selected' : '';
                                             ?>
                                             <option value="<?php echo $t['user_id']; ?>" <?php echo $sel; ?>>
                                                 <?php echo $t['full_name']; ?>
                                             </option>
                                         <?php endwhile; ?>
                                     </select>
+                                </div>
+                                <div class="form-text small">Hold <strong>Ctrl</strong> (Windows) or
+                                    <strong>Cmd</strong> (Mac) to select multiple.
                                 </div>
                             </div>
                         </div>

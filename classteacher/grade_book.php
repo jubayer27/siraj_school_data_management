@@ -4,7 +4,7 @@ include '../config/db.php';
 include 'includes/header.php';
 
 // 1. AUTHENTICATION
-if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
+if($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'class_teacher'){
     header("Location: ../index.php"); 
     exit(); 
 }
@@ -13,17 +13,23 @@ $teacher_id = $_SESSION['user_id'];
 $alert_msg = "";
 $alert_type = "";
 
+// Helper to check subject ownership
+function is_authorized($conn, $sid, $tid) {
+    // UPDATED: Check subject_teachers table
+    $q = $conn->query("SELECT 1 FROM subject_teachers WHERE subject_id = $sid AND teacher_id = $tid");
+    return ($q->num_rows > 0);
+}
+
 // ==========================================
 // 2. EXPORT LOGIC (Download Excel/CSV)
 // ==========================================
 if(isset($_POST['export_csv'])){
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
     
     // Verify ownership
-    $check_auth = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid AND teacher_id = $teacher_id");
-    if($check_auth->num_rows > 0){
-        $sub_info = $check_auth->fetch_assoc();
+    if(is_authorized($conn, $sid, $teacher_id)){
+        $sub_info = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid")->fetch_assoc();
         
         $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
                 FROM students st 
@@ -52,13 +58,11 @@ if(isset($_POST['export_csv'])){
 // 3. IMPORT LOGIC (Upload Excel/CSV)
 // ==========================================
 if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
     $filename = $_FILES['csv_file']['tmp_name'];
     
-    $check_auth = $conn->query("SELECT subject_id FROM subjects WHERE subject_id = $sid AND teacher_id = $teacher_id");
-    
-    if($check_auth->num_rows > 0 && $_FILES['csv_file']['size'] > 0){
+    if(is_authorized($conn, $sid, $teacher_id) && $_FILES['csv_file']['size'] > 0){
         $file = fopen($filename, "r");
         $count = 0;
         fgetcsv($file); // Skip Header
@@ -66,7 +70,7 @@ if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
         while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
             $reg_no = $data[0];
             $mark_val = floatval($data[2]);
-            if($data[2] === "") continue;
+            if(!is_numeric($data[2])) continue;
 
             $g = ($mark_val >= 80) ? 'A' : (($mark_val >= 60) ? 'B' : (($mark_val >= 40) ? 'C' : 'F'));
 
@@ -105,49 +109,52 @@ if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
 // 4. MANUAL SAVE LOGIC
 // ==========================================
 if (isset($_POST['save_marks'])) {
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
     $count = 0;
     
-    foreach ($_POST['marks'] as $eid => $val) {
-        if ($val === "") continue;
-        $val = floatval($val);
-        $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
+    if(isset($_POST['marks'])){
+        foreach ($_POST['marks'] as $eid => $val) {
+            if ($val === "") continue;
+            $val = floatval($val);
+            $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
 
-        $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
-        if ($chk->num_rows > 0) {
-            $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-            $stmt->bind_param("dsis", $val, $g, $eid, $etype);
-        } else {
-            $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-            $stmt->bind_param("isds", $eid, $etype, $val, $g);
+            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+            if ($chk->num_rows > 0) {
+                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                $stmt->bind_param("dsis", $val, $g, $eid, $etype);
+            } else {
+                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                $stmt->bind_param("isds", $eid, $etype, $val, $g);
+            }
+            $stmt->execute();
+            $count++;
         }
-        $stmt->execute();
-        $count++;
+        $alert_msg = "Saved $count marks successfully.";
+        $alert_type = "success";
     }
-    $alert_msg = "Saved $count marks successfully.";
-    $alert_type = "success";
 }
 
 // 5. FETCH SUBJECTS TAUGHT BY THIS TEACHER
+// UPDATED: Use subject_teachers join
 $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name, c.class_id 
               FROM subjects s 
+              JOIN subject_teachers st ON s.subject_id = st.subject_id
               JOIN classes c ON s.class_id = c.class_id 
-              WHERE s.teacher_id = $teacher_id 
+              WHERE st.teacher_id = $teacher_id 
               ORDER BY c.class_name, s.subject_name";
 $my_subjects = $conn->query($sub_query);
 
 // 6. LOAD SELECTED DATA
-$sel_sub = isset($_GET['subject_id']) ? $_GET['subject_id'] : '';
+$sel_sub = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : '';
 $sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
 
 $students = null;
 $stats = ['total'=>0, 'graded'=>0, 'avg'=>0];
 
 if ($sel_sub) {
-    // Security: Check if teacher owns this subject
-    $check_own = $conn->query("SELECT * FROM subjects WHERE subject_id = $sel_sub AND teacher_id = $teacher_id");
-    if($check_own->num_rows > 0){
+    // Security Check
+    if(is_authorized($conn, $sel_sub, $teacher_id)){
         $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_obtained, sm.grade
                 FROM students st
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id

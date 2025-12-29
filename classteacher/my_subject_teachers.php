@@ -21,12 +21,14 @@ $class_name = $my_class ? $my_class['class_name'] : "No Class Assigned";
 // 3. FETCH SUBJECT TEACHERS
 $teachers = null;
 if($cid){
-    // Join Subjects -> Users to get teacher details
+    // UPDATED: Join subject_teachers to support Many-to-Many
+    // Returns one row per teacher-subject pair.
     $sql = "SELECT s.subject_name, s.subject_code, u.full_name, u.phone, u.avatar, u.user_id 
             FROM subjects s 
-            LEFT JOIN users u ON s.teacher_id = u.user_id 
+            LEFT JOIN subject_teachers st ON s.subject_id = st.subject_id
+            LEFT JOIN users u ON st.teacher_id = u.user_id 
             WHERE s.class_id = $cid 
-            ORDER BY s.subject_name ASC";
+            ORDER BY s.subject_name ASC, u.full_name ASC";
     $teachers = $conn->query($sql);
 }
 ?>
@@ -85,7 +87,7 @@ if($cid){
                 <?php if($cid): ?>
                 <div class="d-flex gap-2">
                     <span class="badge bg-light text-dark border px-3 py-2 rounded-pill">
-                        <i class="fas fa-book me-2 text-warning"></i> <?php echo $teachers->num_rows; ?> Subjects
+                        <i class="fas fa-book me-2 text-warning"></i> <?php echo $teachers->num_rows; ?> Records
                     </span>
                 </div>
                 <?php endif; ?>

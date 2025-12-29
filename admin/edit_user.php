@@ -61,21 +61,21 @@ if (isset($_POST['update_user'])) {
         $stmt->execute();
 
         // ---------------------------------------------------------
-        // D. HANDLE SUBJECT ASSIGNMENTS (New Logic)
+        // D. HANDLE SUBJECT ASSIGNMENTS (UPDATED FOR MANY-TO-MANY)
         // ---------------------------------------------------------
-        // Only if role is NOT admin (admins don't teach usually, but logic allows it)
         if ($role != 'admin') {
-            // 1. Reset: Remove this teacher from ALL subjects first
-            $conn->query("UPDATE subjects SET teacher_id = NULL WHERE teacher_id = $uid");
+            // 1. Wipe existing assignments for this teacher in the junction table
+            // This effectively "unchecks" anything not submitted in the form
+            $conn->query("DELETE FROM subject_teachers WHERE teacher_id = $uid");
 
-            // 2. Assign: Update selected subjects to this teacher
+            // 2. Insert new assignments from checked boxes
             if (isset($_POST['assigned_subjects']) && !empty($_POST['assigned_subjects'])) {
-                $subject_ids = $_POST['assigned_subjects']; // Array of IDs
+                $stmt_insert = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
                 
-                // Sanitize array to comma separated string of integers
-                $ids_string = implode(",", array_map('intval', $subject_ids));
-                
-                $conn->query("UPDATE subjects SET teacher_id = $uid WHERE subject_id IN ($ids_string)");
+                foreach ($_POST['assigned_subjects'] as $sub_id) {
+                    $stmt_insert->bind_param("ii", $sub_id, $uid);
+                    $stmt_insert->execute();
+                }
             }
         }
 
@@ -88,23 +88,29 @@ if (isset($_POST['update_user'])) {
 $user = $conn->query("SELECT * FROM users WHERE user_id = $uid")->fetch_assoc();
 if (!$user) die("User not found.");
 
-// 4. FETCH CONTEXT
+// 4. FETCH CONTEXT (Class Mentorship)
 $class_managed = $conn->query("SELECT class_name, year FROM classes WHERE class_teacher_id = $uid")->fetch_assoc();
 
-// 5. FETCH ALL SUBJECTS FOR SELECTION (Grouped by Class)
-// We get Subject details + Current Teacher Name (to show if it's taken)
-$all_subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, s.teacher_id, 
-                     c.class_name, u.full_name as current_teacher
+// ---------------------------------------------------------
+// 5. FETCH DATA FOR ASSIGNMENT DISPLAY
+// ---------------------------------------------------------
+
+// A. Get ALL Subjects grouped by Class
+$all_subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name
                      FROM subjects s 
                      JOIN classes c ON s.class_id = c.class_id 
-                     LEFT JOIN users u ON s.teacher_id = u.user_id
                      ORDER BY c.year DESC, c.class_name ASC, s.subject_name ASC";
 $all_subjects_res = $conn->query($all_subjects_sql);
-
-// Organize subjects by Class Name for display
 $subjects_by_class = [];
 while($row = $all_subjects_res->fetch_assoc()){
     $subjects_by_class[$row['class_name']][] = $row;
+}
+
+// B. Get IDs of subjects currently assigned to THIS user (from junction table)
+$my_subs_res = $conn->query("SELECT subject_id FROM subject_teachers WHERE teacher_id = $uid");
+$my_assigned_ids = [];
+while($row = $my_subs_res->fetch_assoc()){
+    $my_assigned_ids[] = $row['subject_id'];
 }
 ?>
 
@@ -280,7 +286,7 @@ while($row = $all_subjects_res->fetch_assoc()){
                                 <div class="section-title">
                                     <i class="fas fa-book-reader me-2"></i> Subject Allocation
                                 </div>
-                                <p class="small text-muted mb-3">Check the subjects assigned to this teacher. Unchecking will remove the assignment.</p>
+                                <p class="small text-muted mb-3">Check the subjects assigned to this teacher. You can assign multiple teachers to one subject.</p>
                                 
                                 <div class="subject-list-container border rounded p-2 bg-white">
                                     <?php 
@@ -291,10 +297,8 @@ while($row = $all_subjects_res->fetch_assoc()){
                                     ?>
                                         <div class="class-group-header"><?php echo $class_name; ?></div>
                                         <?php foreach($subs as $s): 
-                                            // Is this subject assigned to CURRENT user being edited?
-                                            $is_assigned = ($s['teacher_id'] == $uid);
-                                            // Is it assigned to SOMEONE ELSE?
-                                            $is_taken = ($s['teacher_id'] && $s['teacher_id'] != $uid);
+                                            // CHECK: Is this subject in the user's assigned list?
+                                            $is_assigned = in_array($s['subject_id'], $my_assigned_ids);
                                         ?>
                                         <div class="subject-item">
                                             <div class="form-check m-0">
@@ -308,18 +312,9 @@ while($row = $all_subjects_res->fetch_assoc()){
                                                     <span class="text-muted" style="font-size:0.75rem;">(<?php echo $s['subject_code']; ?>)</span>
                                                 </label>
                                             </div>
-                                            <?php if($is_taken): ?>
-                                                <span class="taken-badge" title="Currently assigned to <?php echo $s['current_teacher']; ?>">
-                                                    <i class="fas fa-user-lock"></i> Taken
-                                                </span>
-                                            <?php endif; ?>
                                         </div>
                                         <?php endforeach; ?>
                                     <?php endforeach; endif; ?>
-                                </div>
-                                
-                                <div class="mt-2 small text-end text-muted fst-italic">
-                                    * Checking a "Taken" subject will reassign it to this user.
                                 </div>
                             </div>
                         </div>

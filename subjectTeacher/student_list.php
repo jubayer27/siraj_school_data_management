@@ -14,8 +14,8 @@ $teacher_id = $_SESSION['user_id'];
 // 2. SEARCH LOGIC
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 
-// 3. FETCH MY STUDENTS
-// We use GROUP BY to ensure unique students, and GROUP_CONCAT to list all subjects they take from you
+// 3. FETCH MY STUDENTS (Updated for Many-to-Many)
+// We join subject_teachers to find subjects linked to this specific teacher
 $sql = "SELECT s.student_id, s.school_register_no, s.student_name, s.phone, s.photo, 
                c.class_name,
                GROUP_CONCAT(sub.subject_name SEPARATOR ', ') as enrolled_subjects
@@ -23,7 +23,8 @@ $sql = "SELECT s.student_id, s.school_register_no, s.student_name, s.phone, s.ph
         JOIN student_subject_enrollment sse ON s.student_id = sse.student_id
         JOIN subjects sub ON sse.subject_id = sub.subject_id
         LEFT JOIN classes c ON s.class_id = c.class_id
-        WHERE sub.teacher_id = $teacher_id";
+        JOIN subject_teachers st ON sub.subject_id = st.subject_id
+        WHERE st.teacher_id = $teacher_id";
 
 if ($search) {
     $sql .= " AND (s.student_name LIKE '%$search%' OR s.school_register_no LIKE '%$search%')";
@@ -48,7 +49,7 @@ $students = $conn->query($sql);
         <div class="card filter-card">
             <form method="GET" style="display:flex; gap:15px; width:100%;">
                 <input type="text" name="search" placeholder="Search by Student Name or ID..."
-                    value="<?php echo $search; ?>"
+                    value="<?php echo htmlspecialchars($search); ?>"
                     style="flex:1; padding:12px; border:1px solid #ddd; border-radius:6px;">
                 <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Search</button>
                 <?php if ($search): ?>
@@ -112,7 +113,7 @@ $students = $conn->query($sql);
                                         <?php endif; ?>
                                     </td>
                                     <td style="text-align:right;">
-                                        <a href="view_profile.php?student_id=<?php echo $row['student_id']; ?>"
+                                        <a href="../classTeacher/view_student_full.php?student_id=<?php echo $row['student_id']; ?>"
                                             class="btn btn-sm btn-primary" title="View Full Profile">
                                             <i class="fas fa-eye"></i> View
                                         </a>
@@ -134,6 +135,10 @@ $students = $conn->query($sql);
 
 <style>
     /* Specific Styles for this Page */
+    .page-header {
+        margin-bottom: 25px;
+    }
+
     .filter-card {
         padding: 20px;
         border-top: 4px solid #DAA520;

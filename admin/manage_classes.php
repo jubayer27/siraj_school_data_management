@@ -29,6 +29,7 @@ if(isset($_GET['delete_id'])){
 if(isset($_POST['create_class'])){
     $name = $_POST['class_name'];
     $year = $_POST['year'];
+    // Handle optional teacher ID correctly
     $tid = !empty($_POST['teacher_id']) ? $_POST['teacher_id'] : NULL;
     
     // Check duplicate
@@ -36,8 +37,14 @@ if(isset($_POST['create_class'])){
     if($dup->num_rows > 0){
         $error = "A class with this name and year already exists.";
     } else {
-        $stmt = $conn->prepare("INSERT INTO classes (class_name, year, class_teacher_id) VALUES (?, ?, ?)");
-        $stmt->bind_param("sii", $name, $year, $tid);
+        // Prepare statement based on whether Teacher ID is provided (to handle NULL safely)
+        if($tid){
+            $stmt = $conn->prepare("INSERT INTO classes (class_name, year, class_teacher_id) VALUES (?, ?, ?)");
+            $stmt->bind_param("sii", $name, $year, $tid);
+        } else {
+            $stmt = $conn->prepare("INSERT INTO classes (class_name, year, class_teacher_id) VALUES (?, ?, NULL)");
+            $stmt->bind_param("si", $name, $year);
+        }
         
         if($stmt->execute()){
             $msg = "New class created successfully!";
@@ -51,7 +58,7 @@ if(isset($_POST['create_class'])){
 
 // 4. FETCH DATA
 // Teachers for Dropdown
-$teachers = $conn->query("SELECT user_id, full_name FROM users WHERE role='class_teacher'");
+$teachers = $conn->query("SELECT user_id, full_name FROM users WHERE role='class_teacher' ORDER BY full_name ASC");
 
 // Classes List with Stats
 $sql = "SELECT c.*, u.full_name, u.avatar,
@@ -208,6 +215,10 @@ $classes = $conn->query($sql);
                                                     <span class="small text-muted"><?php echo $row['subject_count']; ?></span>
                                                 </td>
                                                 <td class="text-end pe-4">
+                                                    <a href="view_class.php?class_id=<?php echo $row['class_id']; ?>" 
+                                                       class="btn btn-outline-info btn-sm me-1" title="View Details">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
                                                     <a href="edit_class.php?class_id=<?php echo $row['class_id']; ?>" 
                                                        class="btn btn-outline-primary btn-sm me-1" title="Edit">
                                                         <i class="fas fa-edit"></i>

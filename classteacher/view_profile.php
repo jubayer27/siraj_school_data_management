@@ -8,7 +8,10 @@ if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
     header("Location: ../index.php"); exit(); 
 }
 
-$sid = $_GET['student_id'];
+if(!isset($_GET['student_id'])){
+    die("Student ID is missing.");
+}
+$sid = intval($_GET['student_id']);
 
 // 2. HANDLE EDIT SUBMISSION
 if(isset($_POST['update_student'])){
@@ -25,7 +28,7 @@ if(isset($_POST['update_student'])){
     $stmt->bind_param("ssssssssi", $name, $ic, $phone, $addr, $father, $father_ph, $mother, $mother_ph, $sid);
     
     if($stmt->execute()){
-        echo "<script>alert('Student details updated successfully!'); echo '<script>window.location.href=window.location.href;</script>';</script>";
+        echo "<script>alert('Student details updated successfully!'); window.location.href=window.location.href;</script>";
     } else {
         echo "<script>alert('Error updating details.');</script>";
     }
@@ -35,18 +38,21 @@ if(isset($_POST['update_student'])){
 $stu_q = $conn->query("SELECT s.*, c.class_name, c.year FROM students s LEFT JOIN classes c ON s.class_id = c.class_id WHERE s.student_id = $sid");
 $student = $stu_q->fetch_assoc();
 
-if(!$student) die("Student not found.");
+if(!$student) die("<div class='main-content p-5'><h3>Student not found.</h3></div>");
 
-// 4. FETCH ENROLLED SUBJECTS & TEACHERS (Updated Query)
-$enrolled_sql = "SELECT sub.subject_name, sub.subject_code, u.full_name as teacher_name
+// 4. FETCH ENROLLED SUBJECTS & TEACHERS (FIXED for Multiple Teachers)
+$enrolled_sql = "SELECT sub.subject_name, sub.subject_code, 
+                 GROUP_CONCAT(u.full_name SEPARATOR ', ') as teacher_name
                  FROM student_subject_enrollment sse
                  JOIN subjects sub ON sse.subject_id = sub.subject_id
-                 LEFT JOIN users u ON sub.teacher_id = u.user_id
+                 LEFT JOIN subject_teachers st ON sub.subject_id = st.subject_id
+                 LEFT JOIN users u ON st.teacher_id = u.user_id
                  WHERE sse.student_id = $sid
+                 GROUP BY sub.subject_id
                  ORDER BY sub.subject_name ASC";
 $enrolled_res = $conn->query($enrolled_sql);
 
-// 5. FETCH ACADEMIC MARKS (Separate Query for Marks)
+// 5. FETCH ACADEMIC MARKS
 $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtained, sm.grade 
                            FROM student_marks sm
                            JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
@@ -315,11 +321,11 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                             <tr>
                                                 <th>Subject Name</th>
                                                 <th>Code</th>
-                                                <th>Subject Teacher</th>
+                                                <th>Subject Teacher(s)</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php if($enrolled_res->num_rows > 0): ?>
+                                            <?php if($enrolled_res && $enrolled_res->num_rows > 0): ?>
                                                 <?php while($sub = $enrolled_res->fetch_assoc()): ?>
                                                 <tr>
                                                     <td class="fw-bold"><?php echo $sub['subject_name']; ?></td>
@@ -352,7 +358,7 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php if($marks_res->num_rows > 0): ?>
+                                            <?php if($marks_res && $marks_res->num_rows > 0): ?>
                                                 <?php while($m = $marks_res->fetch_assoc()): ?>
                                                 <tr>
                                                     <td class="fw-bold"><?php echo $m['exam_type']; ?></td>
@@ -375,7 +381,8 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                 </div>
                             </div>
 
-                        </div> </div>
+                        </div> 
+                    </div>
                 </div>
             </div>
 

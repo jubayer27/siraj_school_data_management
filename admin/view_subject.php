@@ -12,19 +12,25 @@ if(!isset($_GET['subject_id'])){
     echo "<script>window.location='manage_subjects.php';</script>";
     exit();
 }
-$sid = $_GET['subject_id'];
+$sid = intval($_GET['subject_id']);
 
-// 2. FETCH SUBJECT DETAILS
-$sql = "SELECT s.*, c.class_name, c.year, u.full_name as teacher_name, u.phone, u.avatar, u.user_id as teacher_id 
+// 2. FETCH SUBJECT & CLASS DETAILS
+$sql = "SELECT s.*, c.class_name, c.year 
         FROM subjects s 
         LEFT JOIN classes c ON s.class_id = c.class_id 
-        LEFT JOIN users u ON s.teacher_id = u.user_id 
         WHERE s.subject_id = $sid";
 $sub = $conn->query($sql)->fetch_assoc();
 
 if(!$sub) die("Subject not found.");
 
-// 3. FETCH ENROLLED STUDENTS
+// 3. FETCH ASSIGNED TEACHERS (New Logic for Multiple Teachers)
+$teachers_sql = "SELECT u.user_id, u.full_name, u.phone, u.avatar 
+                 FROM users u 
+                 JOIN subject_teachers st ON u.user_id = st.teacher_id 
+                 WHERE st.subject_id = $sid";
+$teachers = $conn->query($teachers_sql);
+
+// 4. FETCH ENROLLED STUDENTS
 $stu_sql = "SELECT st.*, sse.enrollment_date 
             FROM student_subject_enrollment sse 
             JOIN students st ON sse.student_id = st.student_id 
@@ -61,6 +67,18 @@ $enrolled_count = $students->num_rows;
     
     /* Code Badge */
     .code-badge { background: #333; color: white; padding: 5px 12px; border-radius: 6px; font-family: monospace; letter-spacing: 1px; font-size: 0.9rem; }
+
+    /* Teacher List Item */
+    .teacher-item {
+        border-bottom: 1px solid #f0f0f0;
+        padding-bottom: 15px;
+        margin-bottom: 15px;
+    }
+    .teacher-item:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+        margin-bottom: 0;
+    }
 
     @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
 </style>
@@ -113,23 +131,29 @@ $enrolled_count = $students->num_rows;
                     </div>
 
                     <div class="card subject-card">
-                        <div class="card-header bg-white py-3 border-bottom fw-bold text-dark">
-                            <i class="fas fa-user-tie text-primary me-2"></i> Assigned Teacher
+                        <div class="card-header bg-white py-3 border-bottom fw-bold text-dark d-flex justify-content-between">
+                            <span><i class="fas fa-chalkboard-teacher text-primary me-2"></i> Assigned Teachers</span>
+                            <span class="badge bg-light text-dark"><?php echo $teachers->num_rows; ?></span>
                         </div>
                         <div class="card-body p-4">
-                            <?php if($sub['teacher_name']): ?>
-                                <div class="d-flex align-items-center mb-3">
-                                    <?php $avatar = $sub['avatar'] ? "../uploads/".$sub['avatar'] : "https://ui-avatars.com/api/?name=".$sub['teacher_name']; ?>
-                                    <img src="<?php echo $avatar; ?>" class="avatar-md">
-                                    <div>
-                                        <div class="fw-bold text-dark"><?php echo $sub['teacher_name']; ?></div>
-                                        <small class="text-muted"><i class="fas fa-phone me-1"></i> <?php echo $sub['phone'] ? $sub['phone'] : 'N/A'; ?></small>
+                            <?php if($teachers->num_rows > 0): ?>
+                                <?php while($t = $teachers->fetch_assoc()): ?>
+                                    <div class="d-flex align-items-center teacher-item">
+                                        <?php $avatar = $t['avatar'] ? "../uploads/".$t['avatar'] : "https://ui-avatars.com/api/?name=".$t['full_name']."&background=random"; ?>
+                                        <img src="<?php echo $avatar; ?>" class="avatar-md">
+                                        <div class="flex-grow-1">
+                                            <div class="fw-bold text-dark"><?php echo $t['full_name']; ?></div>
+                                            <small class="text-muted d-block"><i class="fas fa-phone me-1"></i> <?php echo $t['phone'] ? $t['phone'] : 'N/A'; ?></small>
+                                        </div>
+                                        <a href="view_user.php?user_id=<?php echo $t['user_id']; ?>" class="btn btn-outline-primary btn-sm ms-2" title="View Profile">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
                                     </div>
-                                </div>
-                                <a href="view_user.php?user_id=<?php echo $sub['teacher_id']; ?>" class="btn btn-outline-primary w-100 btn-sm">View Profile</a>
+                                <?php endwhile; ?>
                             <?php else: ?>
-                                <div class="text-center py-3 text-muted fst-italic">
-                                    <i class="fas fa-exclamation-circle me-1"></i> No teacher assigned yet.
+                                <div class="text-center py-4 text-muted fst-italic">
+                                    <div class="mb-2"><i class="fas fa-user-slash fa-2x text-secondary opacity-50"></i></div>
+                                    No teachers assigned yet.
                                 </div>
                             <?php endif; ?>
                         </div>

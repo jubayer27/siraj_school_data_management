@@ -4,7 +4,7 @@ include '../config/db.php';
 include 'includes/header.php';
 
 // 1. AUTHENTICATION
-if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin') {
+if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'class_teacher') {
     header("Location: ../index.php");
     exit();
 }
@@ -12,22 +12,22 @@ if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin') {
 $tid = $_SESSION['user_id'];
 
 // 2. FETCH KEY STATS
-// A. Total Subjects
-$sub_count = $conn->query("SELECT count(*) as c FROM subjects WHERE teacher_id = $tid")->fetch_assoc()['c'];
+// A. Total Subjects (Updated for junction table)
+$sub_count = $conn->query("SELECT count(*) as c FROM subject_teachers WHERE teacher_id = $tid")->fetch_assoc()['c'];
 
-// B. Total Unique Students
+// B. Total Unique Students (Updated logic)
 $stu_count = $conn->query("SELECT count(DISTINCT sse.student_id) as c 
                            FROM student_subject_enrollment sse 
-                           JOIN subjects s ON sse.subject_id = s.subject_id 
-                           WHERE s.teacher_id = $tid")->fetch_assoc()['c'];
+                           JOIN subject_teachers st ON sse.subject_id = st.subject_id 
+                           WHERE st.teacher_id = $tid")->fetch_assoc()['c'];
 
-// C. Fetch Notices (Audience: 'all' or 'subject_teacher')
+// C. Fetch Notices
 $notices = $conn->query("SELECT * FROM notices 
                          WHERE audience IN ('all', 'subject_teacher') 
                          ORDER BY created_at DESC LIMIT 3");
 
 // D. Subject Performance & Grading Progress
-// We calculate how many students have marks vs total enrolled for 'Midterm' (default)
+// Updated query to join subject_teachers
 $subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name,
                  (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as total_students,
                  (SELECT COUNT(*) FROM student_marks sm 
@@ -35,7 +35,9 @@ $subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_na
                   WHERE sse.subject_id = s.subject_id AND sm.exam_type = 'Midterm') as graded_count
                  FROM subjects s 
                  JOIN classes c ON s.class_id = c.class_id 
-                 WHERE s.teacher_id = $tid";
+                 JOIN subject_teachers st ON s.subject_id = st.subject_id
+                 WHERE st.teacher_id = $tid
+                 ORDER BY c.class_name, s.subject_name";
 $my_subjects = $conn->query($subjects_sql);
 ?>
 
@@ -45,7 +47,7 @@ $my_subjects = $conn->query($subjects_sql);
     <div class="main-content">
         <div class="dashboard-header">
             <div>
-                <h1>Welcome, <?php echo $_SESSION['full_name']; ?></h1>
+                <h1>Welcome, <?php echo isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'Teacher'; ?></h1>
                 <p>Here is your academic overview for today.</p>
             </div>
             <div class="date-badge">
@@ -174,7 +176,28 @@ $my_subjects = $conn->query($subjects_sql);
 </div>
 
 <style>
-    /* Dashboard Specifics */
+    /* CSS Styles included directly for portability */
+    body {
+        background-color: #f4f6f9;
+        overflow-x: hidden;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .main-content {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh;
+        padding: 30px !important;
+        display: block !important;
+    }
+
+    .container-fluid {
+        padding: 0 !important;
+    }
+
     .dashboard-header {
         display: flex;
         justify-content: space-between;
@@ -204,6 +227,10 @@ $my_subjects = $conn->query($subjects_sql);
         display: flex;
         align-items: center;
         transition: 0.3s;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+        border: none;
     }
 
     .stat-card:hover {
@@ -242,10 +269,17 @@ $my_subjects = $conn->query($subjects_sql);
         gap: 25px;
     }
 
+    .card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+        border: none;
+        overflow: hidden;
+    }
+
     /* Table */
     .table-card {
         padding: 0;
-        overflow: hidden;
     }
 
     .card-header-row {
@@ -376,10 +410,19 @@ $my_subjects = $conn->query($subjects_sql);
         border-radius: 4px;
     }
 
-    @media(max-width: 900px) {
+    @media(max-width: 992px) {
+        .main-content {
+            width: 100% !important;
+            margin-left: 0 !important;
+        }
+
         .grid-2-col {
             grid-template-columns: 1fr;
         }
     }
 </style>
-<?php include 'includes/footer.php'; ?>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

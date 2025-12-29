@@ -3,24 +3,27 @@ session_start();
 include '../config/db.php';
 include 'includes/header.php';
 
-if ($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin') {
+// 1. AUTHENTICATION
+if ($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'subject_teacher') {
     header("Location: ../index.php");
     exit();
 }
 
 $tid = $_SESSION['user_id'];
 
-// FETCH ALL SUBJECTS TAUGHT BY THIS TEACHER
+// 2. FETCH ALL SUBJECTS TAUGHT BY THIS TEACHER (Updated for Many-to-Many)
 $sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name,
         (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as enrollment
         FROM subjects s
         JOIN classes c ON s.class_id = c.class_id
-        WHERE s.teacher_id = $tid
+        JOIN subject_teachers st ON s.subject_id = st.subject_id
+        WHERE st.teacher_id = $tid
         ORDER BY c.class_name, s.subject_name";
 $subjects = $conn->query($sql);
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
     body {
         background-color: #f4f6f9;
@@ -54,6 +57,15 @@ $subjects = $conn->query($sql);
         box-shadow: 0 8px 15px rgba(0, 0, 0, 0.05);
     }
 
+    .icon-square {
+        width: 45px;
+        height: 45px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+    }
+
     @media (max-width: 992px) {
         .main-content {
             width: 100% !important;
@@ -82,10 +94,10 @@ $subjects = $conn->query($sql);
                             <div class="card h-100">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-start mb-3">
-                                        <div class="icon-square bg-light text-primary rounded p-3">
+                                        <div class="icon-square bg-warning bg-opacity-10 text-warning">
                                             <i class="fas fa-book fa-lg"></i>
                                         </div>
-                                        <span class="badge bg-warning text-dark"><?php echo $row['class_name']; ?></span>
+                                        <span class="badge bg-dark"><?php echo $row['class_name']; ?></span>
                                     </div>
 
                                     <h5 class="fw-bold text-dark mb-1"><?php echo $row['subject_name']; ?></h5>
@@ -96,13 +108,9 @@ $subjects = $conn->query($sql);
                                     </div>
 
                                     <div class="d-grid gap-2">
-                                        <a href="../subjectTeacher/manage_marks.php?subject_id=<?php echo $row['subject_id']; ?>"
-                                            class="btn btn-primary">
+                                        <a href="grade_book.php?subject_id=<?php echo $row['subject_id']; ?>"
+                                            class="btn btn-primary fw-bold shadow-sm">
                                             <i class="fas fa-pen-alt me-2"></i> Grade Now
-                                        </a>
-                                        <a href="../subjectTeacher/student_list.php?subject_id=<?php echo $row['subject_id']; ?>"
-                                            class="btn btn-outline-secondary btn-sm">
-                                            View Student List
                                         </a>
                                     </div>
                                 </div>
@@ -111,8 +119,10 @@ $subjects = $conn->query($sql);
                     <?php endwhile; ?>
                 <?php else: ?>
                     <div class="col-12">
-                        <div class="alert alert-info text-center">
-                            <i class="fas fa-info-circle me-2"></i> You have not been assigned any subjects to teach yet.
+                        <div class="alert alert-info text-center py-5 border-0 shadow-sm">
+                            <i class="fas fa-info-circle fa-2x mb-3 text-info"></i><br>
+                            <h5 class="fw-bold">No Subjects Assigned</h5>
+                            <p class="text-muted">You have not been assigned to teach any subjects yet.</p>
                         </div>
                     </div>
                 <?php endif; ?>

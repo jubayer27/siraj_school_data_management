@@ -19,10 +19,9 @@ if (isset($_POST['export_csv'])) {
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     $output = fopen('php://output', 'w');
 
-    // --- TYPE A: STUDENTS (ALL 40+ COLUMNS) ---
+    // --- TYPE A: STUDENTS ---
     if ($type == 'students') {
-        // Header
-        $headers = ['RegNo', 'Name', 'IC', 'Gender', 'Class_Name', 'DOB', 'BirthPlace', 'Race', 'Religion', 'Nationality', 'Phone', 'Address', 'EnrollDate', 'PrevSchool', 'BirthCert', 'FatherName', 'FatherIC', 'FatherPhone', 'FatherJob', 'FatherSalary', 'MotherName', 'MotherIC', 'MotherPhone', 'MotherJob', 'MotherSalary', 'GuardName', 'GuardIC', 'GuardPhone', 'GuardJob', 'GuardSalary', 'MaritalStatus', 'IsOrphan', 'IsBaitulmal', 'SportsHouse', 'Uniform', 'UniPos', 'Club', 'ClubPos', 'Sport', 'SportPos'];
+        $headers = ['RegNo', 'Name', 'IC', 'Gender', 'Class_Name', 'DOB', 'BirthPlace', 'Race', 'Religion', 'Nationality', 'Phone', 'Address', 'EnrollDate', 'PrevSchool', 'FatherName', 'FatherPhone', 'MotherName', 'MotherPhone', 'IsOrphan', 'IsBaitulmal'];
         fputcsv($output, $headers);
 
         $sql = "SELECT s.*, c.class_name FROM students s LEFT JOIN classes c ON s.class_id = c.class_id ORDER BY c.class_name, s.student_name";
@@ -44,42 +43,22 @@ if (isset($_POST['export_csv'])) {
                 $r['address'],
                 $r['enrollment_date'],
                 $r['previous_school'],
-                $r['birth_cert_no'],
                 $r['father_name'],
-                $r['father_ic'],
                 $r['father_phone'],
-                $r['father_job'],
-                $r['father_salary'],
                 $r['mother_name'],
-                $r['mother_ic'],
                 $r['mother_phone'],
-                $r['mother_job'],
-                $r['mother_salary'],
-                $r['guardian_name'],
-                $r['guardian_ic'],
-                $r['guardian_phone'],
-                $r['guardian_job'],
-                $r['guardian_salary'],
-                $r['parents_marital_status'],
                 $r['is_orphan'],
-                $r['is_baitulmal_recipient'],
-                $r['sports_house'],
-                $r['uniform_unit'],
-                $r['uniform_position'],
-                $r['club_association'],
-                $r['club_position'],
-                $r['sports_game'],
-                $r['sports_position']
+                $r['is_baitulmal_recipient']
             ]);
         }
     }
 
     // --- TYPE B: STAFF / USERS ---
     elseif ($type == 'users') {
-        fputcsv($output, ['FullName', 'Username', 'Role', 'StaffID', 'IC_No', 'Phone']);
+        fputcsv($output, ['FullName', 'Username', 'Role', 'StaffID', 'IC_No', 'Phone', 'Status']);
         $rows = $conn->query("SELECT * FROM users ORDER BY role, full_name");
         while ($r = $rows->fetch_assoc()) {
-            fputcsv($output, [$r['full_name'], $r['username'], $r['role'], $r['teacher_id_no'], $r['ic_no'], $r['phone']]);
+            fputcsv($output, [$r['full_name'], $r['username'], $r['role'], $r['teacher_id_no'], $r['ic_no'], $r['phone'], 'Active']);
         }
     }
 
@@ -93,13 +72,23 @@ if (isset($_POST['export_csv'])) {
         }
     }
 
-    // --- TYPE D: SUBJECTS ---
+    // --- TYPE D: SUBJECTS (UPDATED FOR MULTIPLE TEACHERS) ---
     elseif ($type == 'subjects') {
-        fputcsv($output, ['SubjectName', 'Code', 'ClassName', 'TeacherName']);
-        $sql = "SELECT s.*, c.class_name, u.full_name FROM subjects s LEFT JOIN classes c ON s.class_id = c.class_id LEFT JOIN users u ON s.teacher_id = u.user_id ORDER BY c.class_name, s.subject_name";
+        fputcsv($output, ['SubjectName', 'Code', 'ClassName', 'AssignedTeachers']);
+
+        // Use Subquery to fetch teachers via junction table
+        $sql = "SELECT s.subject_name, s.subject_code, c.class_name,
+                (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') 
+                 FROM subject_teachers st 
+                 JOIN users u ON st.teacher_id = u.user_id 
+                 WHERE st.subject_id = s.subject_id) as teacher_names
+                FROM subjects s 
+                LEFT JOIN classes c ON s.class_id = c.class_id 
+                ORDER BY c.class_name, s.subject_name";
+
         $rows = $conn->query($sql);
         while ($r = $rows->fetch_assoc()) {
-            fputcsv($output, [$r['subject_name'], $r['subject_code'], $r['class_name'], $r['full_name']]);
+            fputcsv($output, [$r['subject_name'], $r['subject_code'], $r['class_name'], $r['teacher_names']]);
         }
     }
 
@@ -141,38 +130,10 @@ include 'includes/header.php';
     }
 
     .card-header-custom {
-        background: #2980b9;
+        background: #2c3e50;
         color: white;
         padding: 20px;
         border-radius: 12px 12px 0 0;
-    }
-
-    .option-btn {
-        display: block;
-        width: 100%;
-        text-align: left;
-        padding: 15px;
-        margin-bottom: 10px;
-        border: 2px solid #eee;
-        border-radius: 8px;
-        background: white;
-        color: #555;
-        transition: 0.2s;
-        cursor: pointer;
-        text-decoration: none;
-    }
-
-    .option-btn:hover {
-        border-color: #2980b9;
-        background: #f0f8ff;
-        color: #2980b9;
-    }
-
-    .option-btn i {
-        width: 30px;
-        text-align: center;
-        margin-right: 10px;
-        font-size: 1.2rem;
     }
 
     /* Print Styles */
@@ -295,8 +256,7 @@ include 'includes/header.php';
 </div>
 
 <script>
-    // PHP DATA TO JS FOR PRINT VIEW
-    // This allows instant print preview without page reload
+    // PREPARE DATA FOR PRINT VIEW (Using PHP to populate JS variables)
     const allData = {
         students: <?php
         $d = [];
@@ -305,6 +265,7 @@ include 'includes/header.php';
             $d[] = $r;
         echo json_encode($d);
         ?>,
+
         users: <?php
         $d = [];
         $q = $conn->query("SELECT full_name, role, teacher_id_no, phone FROM users ORDER BY role");
@@ -312,6 +273,7 @@ include 'includes/header.php';
             $d[] = $r;
         echo json_encode($d);
         ?>,
+
         classes: <?php
         $d = [];
         $q = $conn->query("SELECT class_name, year, full_name FROM classes c LEFT JOIN users u ON c.class_teacher_id=u.user_id ORDER BY year DESC, class_name");
@@ -319,9 +281,13 @@ include 'includes/header.php';
             $d[] = $r;
         echo json_encode($d);
         ?>,
+
         subjects: <?php
+        // UPDATED: Using GROUP_CONCAT for multiple teachers in Print View
         $d = [];
-        $q = $conn->query("SELECT subject_name, subject_code, class_name FROM subjects s LEFT JOIN classes c ON s.class_id=c.class_id ORDER BY class_name");
+        $q = $conn->query("SELECT s.subject_name, s.subject_code, c.class_name,
+                           (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') FROM subject_teachers st JOIN users u ON st.teacher_id=u.user_id WHERE st.subject_id=s.subject_id) as teacher_names
+                           FROM subjects s LEFT JOIN classes c ON s.class_id=c.class_id ORDER BY c.class_name");
         while ($r = $q->fetch_assoc())
             $d[] = $r;
         echo json_encode($d);
@@ -340,7 +306,7 @@ include 'includes/header.php';
         // Set Title
         document.getElementById('reportTitle').innerText = type.toUpperCase() + ' MASTER LIST';
 
-        // Build Table
+        // Build Table HTML
         let html = '<table class="table table-bordered table-striped border-dark"><thead><tr class="table-dark">';
 
         if (type === 'students') {
@@ -359,9 +325,9 @@ include 'includes/header.php';
                 html += `<tr><td class="fw-bold">${row.class_name}</td><td>${row.year}</td><td>${row.full_name || 'Unassigned'}</td></tr>`;
             });
         } else if (type === 'subjects') {
-            html += '<th>Subject</th><th>Code</th><th>Class</th></tr></thead><tbody>';
+            html += '<th>Subject</th><th>Code</th><th>Class</th><th>Teachers</th></tr></thead><tbody>';
             data.forEach(row => {
-                html += `<tr><td class="fw-bold">${row.subject_name}</td><td>${row.subject_code}</td><td>${row.class_name || '-'}</td></tr>`;
+                html += `<tr><td class="fw-bold">${row.subject_name}</td><td>${row.subject_code}</td><td>${row.class_name || '-'}</td><td>${row.teacher_names || '<span class="text-muted">Unassigned</span>'}</td></tr>`;
             });
         }
 

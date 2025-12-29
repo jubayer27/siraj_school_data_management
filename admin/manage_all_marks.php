@@ -1,38 +1,39 @@
 <?php
 session_start();
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 include '../config/db.php';
 
 // 1. SECURITY & AUTH
-if ($_SESSION['role'] != 'admin') {
+if (!isset($_SESSION['role']) || $_SESSION['role'] != 'admin') {
     header("Location: ../index.php");
     exit();
 }
 
 // ==========================================
-// 2. EXPORT LOGIC (Must be before HTML)
+// 2. EXPORT LOGIC (CSV Download)
 // ==========================================
 if (isset($_POST['export_csv'])) {
     $cid = $_POST['class_id'];
     $sid = $_POST['subject_id'];
     $etype = $_POST['exam_type'];
 
-    // Fetch Data matching the current view
-    $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
+    // Fetch Data
+    $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained, sm.grade 
             FROM students st 
             JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
             LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$etype'
             WHERE sse.subject_id = $sid AND sse.class_id = $cid
-            ORDER BY st.school_register_no ASC";
+            ORDER BY st.student_name ASC";
     $rows = $conn->query($sql);
 
-    // Set Headers for Download
+    // Set Headers
     $filename = "Marks_Class" . $cid . "_Sub" . $sid . "_" . date('Ymd') . ".csv";
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
 
     $output = fopen('php://output', 'w');
-    // Header Row matches Import expectation
-    fputcsv($output, array('Register No', 'Student Name', 'Mark (0-100)'));
+    fputcsv($output, array('Register No', 'Student Name', 'Mark', 'Grade'));
 
     while ($row = $rows->fetch_assoc()) {
         fputcsv($output, $row);
@@ -44,7 +45,7 @@ if (isset($_POST['export_csv'])) {
 include 'includes/header.php';
 
 // ==========================================
-// 3. IMPORT LOGIC
+// 3. IMPORT LOGIC (CSV Upload)
 // ==========================================
 $msg = "";
 $msg_type = "";
@@ -58,19 +59,18 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     if ($_FILES['csv_file']['size'] > 0) {
         $file = fopen($filename, "r");
         $count = 0;
-
-        // Skip header row
-        fgetcsv($file);
+        fgetcsv($file); // Skip header
 
         while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
-            // CSV Structure: [0] => Reg No, [1] => Name (Ignored), [2] => Mark
-            $reg_no = $data[0];
+            // CSV: [0]RegNo, [1]Name, [2]Mark
+            $reg_no = $conn->real_escape_string(trim($data[0]));
+
+            // Validate Mark
+            if (!isset($data[2]) || $data[2] === "")
+                continue;
             $mark_val = floatval($data[2]);
 
-            if ($data[2] === "")
-                continue; // Skip empty marks
-
-            // Calculate Grade
+            // Calculate Grade (Standard Scale)
             $g = 'F';
             if ($mark_val >= 80)
                 $g = 'A';
@@ -79,17 +79,18 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
             elseif ($mark_val >= 40)
                 $g = 'C';
 
-            // Find Enrollment ID based on Register No + Subject
-            // This ensures we only update the correct student for THIS subject
+            // Find Enrollment
             $find_stu = $conn->query("SELECT sse.enrollment_id 
                                       FROM students st 
                                       JOIN student_subject_enrollment sse ON st.student_id = sse.student_id 
-                                      WHERE st.school_register_no = '$reg_no' AND sse.subject_id = $sid AND sse.class_id = $cid");
+                                      WHERE st.school_register_no = '$reg_no' 
+                                      AND sse.subject_id = $sid 
+                                      AND sse.class_id = $cid");
 
             if ($find_stu->num_rows > 0) {
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
 
-                // Update or Insert
+                // Update or Insert Mark
                 $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
                 if ($chk->num_rows > 0) {
                     $upd = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
@@ -119,25 +120,29 @@ if (isset($_POST['save_changes'])) {
     $etype = $_POST['exam_type'];
     $count = 0;
 
-    foreach ($_POST['marks'] as $eid => $val) {
-        if ($val === "")
-            continue;
-        $val = floatval($val);
-        $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
+    if (isset($_POST['marks'])) {
+        foreach ($_POST['marks'] as $eid => $val) {
+            if ($val === "")
+                continue;
 
-        $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
-        if ($chk->num_rows > 0) {
-            $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-            $stmt->bind_param("dsis", $val, $g, $eid, $etype);
-        } else {
-            $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-            $stmt->bind_param("isds", $eid, $etype, $val, $g);
+            $val = floatval($val);
+            // Grade Logic
+            $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
+
+            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+            if ($chk->num_rows > 0) {
+                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                $stmt->bind_param("dsis", $val, $g, $eid, $etype);
+            } else {
+                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                $stmt->bind_param("isds", $eid, $etype, $val, $g);
+            }
+            $stmt->execute();
+            $count++;
         }
-        $stmt->execute();
-        $count++;
+        $msg = "Manual update successful. Saved $count marks.";
+        $msg_type = "success";
     }
-    $msg = "Manual update successful. Saved $count marks.";
-    $msg_type = "success";
 }
 
 // ==========================================
@@ -151,6 +156,7 @@ $sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
 
 $subjects = [];
 if ($sel_class) {
+    // Fetch subjects linked to this class
     $sub_q = $conn->query("SELECT * FROM subjects WHERE class_id = $sel_class ORDER BY subject_name");
     while ($s = $sub_q->fetch_assoc())
         $subjects[] = $s;
@@ -183,7 +189,6 @@ if ($sel_class && $sel_subject) {
             if ($m > $stats['max'])
                 $stats['max'] = $m;
 
-            // Grade Count
             $grade = $row['grade'];
             if (isset($stats['grade_counts'][$grade]))
                 $stats['grade_counts'][$grade]++;
@@ -191,33 +196,312 @@ if ($sel_class && $sel_subject) {
     }
     if ($count_marks > 0)
         $stats['avg'] = round($total_marks / $count_marks, 2);
-    $students->data_seek(0); // Reset pointer
+    $students->data_seek(0);
 }
 ?>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+<style>
+    /* Global Layout Fixes */
+    body {
+        background-color: #f4f6f9;
+        overflow-x: hidden;
+    }
+
+    .main-content {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh;
+        padding: 30px !important;
+        display: block !important;
+    }
+
+    /* Header */
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+    }
+
+    .dashboard-header h2 {
+        font-weight: 700;
+        color: #2c3e50;
+        margin: 0;
+    }
+
+    .dashboard-header p {
+        color: #7f8c8d;
+        margin: 0;
+    }
+
+    /* Filter Card */
+    .filter-card {
+        padding: 20px;
+        border-top: 4px solid #FFD700;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+        margin-bottom: 25px;
+        background: white;
+    }
+
+    .filter-form {
+        display: flex;
+        gap: 15px;
+        align-items: flex-end;
+    }
+
+    .input-group {
+        flex: 1;
+    }
+
+    .input-group label {
+        font-weight: 700;
+        color: #DAA520;
+        display: block;
+        margin-bottom: 5px;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+    }
+
+    /* Stats Grid */
+    .grid-2-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 25px;
+    }
+
+    .stats-grid-mini {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+    }
+
+    .stat-card {
+        background: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+
+    .stat-val {
+        font-size: 2rem;
+        font-weight: 800;
+        color: #333;
+        line-height: 1;
+        margin-bottom: 5px;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: #999;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 1px;
+    }
+
+    /* Chart Bars */
+    .viz-card {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        height: 100%;
+    }
+
+    .bar-group {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .bar-label {
+        width: 30px;
+        font-weight: 700;
+        color: #555;
+    }
+
+    .bar-track {
+        flex: 1;
+        background: #f0f0f0;
+        height: 12px;
+        border-radius: 6px;
+        margin: 0 15px;
+        overflow: hidden;
+    }
+
+    .bar-fill {
+        height: 100%;
+        border-radius: 6px;
+        transition: width 0.5s ease;
+    }
+
+    .bar-count {
+        font-size: 0.85rem;
+        color: #777;
+        width: 20px;
+        text-align: right;
+    }
+
+    /* Marks Table */
+    .table-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+        overflow: hidden;
+    }
+
+    .card-header-row {
+        padding: 20px 25px;
+        border-bottom: 1px solid #f0f0f0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .marks-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .marks-table th {
+        background: #fafafa;
+        padding: 15px 25px;
+        text-align: left;
+        color: #555;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+        font-weight: 700;
+        border-bottom: 2px solid #eee;
+    }
+
+    .marks-table td {
+        padding: 12px 25px;
+        border-bottom: 1px solid #f0f0f0;
+        vertical-align: middle;
+    }
+
+    .marks-table tr:hover {
+        background-color: #fffcf5;
+    }
+
+    .mark-input {
+        width: 80px;
+        padding: 8px 10px;
+        text-align: center;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-weight: 700;
+        color: #333;
+        transition: all 0.2s;
+    }
+
+    .mark-input:focus {
+        border-color: #FFD700;
+        background: #fff;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1);
+    }
+
+    .avatar-circle {
+        width: 35px;
+        height: 35px;
+        background: #DAA520;
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.9rem;
+        margin-right: 15px;
+    }
+
+    .stu-name {
+        font-weight: 600;
+        color: #2c3e50;
+    }
+
+    /* Status Pills */
+    .status-pill {
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .status-pill.pass {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    .status-pill.fail {
+        background: #ffebee;
+        color: #c62828;
+    }
+
+    .status-pill.pending {
+        background: #f5f5f5;
+        color: #999;
+    }
+
+    /* Import Box */
+    #importBox {
+        background: #f9f9f9;
+        border: 2px dashed #ccc;
+        padding: 25px;
+        border-radius: 12px;
+        margin-bottom: 25px;
+    }
+
+    /* Responsive */
+    @media(max-width: 992px) {
+        .main-content {
+            width: 100% !important;
+            margin-left: 0 !important;
+        }
+
+        .grid-2-col {
+            grid-template-columns: 1fr;
+        }
+
+        .filter-form {
+            flex-direction: column;
+            align-items: stretch;
+        }
+    }
+</style>
 
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
 
-    <div class="main-content full-width">
+    <div class="main-content">
         <div class="dashboard-header">
             <div>
-                <h1>Marks Control Center</h1>
-                <p>Advanced grading, analytics, and data import/export.</p>
+                <h2>Marks Control Center</h2>
+                <p>Advanced grading, analytics, and data management.</p>
             </div>
 
             <?php if ($sel_class && $sel_subject): ?>
                 <div style="display:flex; gap:10px;">
-                    <button onclick="document.getElementById('importBox').style.display='block'" class="btn btn-primary"
-                        style="background:#8e44ad;">
-                        <i class="fas fa-file-upload"></i> Import Excel
+                    <button onclick="document.getElementById('importBox').style.display='block'"
+                        class="btn btn-outline-primary shadow-sm">
+                        <i class="fas fa-file-upload me-2"></i> Import
                     </button>
 
                     <form method="POST" style="margin:0;">
                         <input type="hidden" name="class_id" value="<?php echo $sel_class; ?>">
                         <input type="hidden" name="subject_id" value="<?php echo $sel_subject; ?>">
                         <input type="hidden" name="exam_type" value="<?php echo $sel_exam; ?>">
-                        <button type="submit" name="export_csv" class="btn btn-primary" style="background:#27ae60;">
-                            <i class="fas fa-file-excel"></i> Export Excel
+                        <button type="submit" name="export_csv" class="btn btn-success shadow-sm fw-bold">
+                            <i class="fas fa-file-excel me-2"></i> Export
                         </button>
                     </form>
                 </div>
@@ -225,14 +509,19 @@ if ($sel_class && $sel_subject) {
         </div>
 
         <?php if ($msg): ?>
-            <div class="alert-box <?php echo $msg_type; ?>"><?php echo $msg; ?></div>
+            <div
+                class="alert alert-<?php echo ($msg_type == 'success') ? 'success' : 'danger'; ?> d-flex align-items-center mb-4 shadow-sm">
+                <i
+                    class="fas fa-<?php echo ($msg_type == 'success') ? 'check-circle' : 'exclamation-triangle'; ?> me-2"></i>
+                <?php echo $msg; ?>
+            </div>
         <?php endif; ?>
 
         <div class="card filter-card">
             <form method="GET" class="filter-form">
                 <div class="input-group">
                     <label>1. Class Context</label>
-                    <select name="class_id" onchange="this.form.submit()">
+                    <select name="class_id" class="form-select" onchange="this.form.submit()">
                         <option value="">-- Select Class --</option>
                         <?php
                         $classes->data_seek(0);
@@ -247,7 +536,7 @@ if ($sel_class && $sel_subject) {
 
                 <div class="input-group">
                     <label>2. Subject Context</label>
-                    <select name="subject_id" onchange="this.form.submit()" <?php if (!$sel_class)
+                    <select name="subject_id" class="form-select" onchange="this.form.submit()" <?php if (!$sel_class)
                         echo 'disabled'; ?>>
                         <option value="">-- Select Subject --</option>
                         <?php foreach ($subjects as $s): ?>
@@ -260,7 +549,7 @@ if ($sel_class && $sel_subject) {
 
                 <div class="input-group">
                     <label>3. Exam Term</label>
-                    <select name="exam_type" onchange="this.form.submit()">
+                    <select name="exam_type" class="form-select" onchange="this.form.submit()">
                         <option value="Midterm" <?php echo ($sel_exam == 'Midterm') ? 'selected' : ''; ?>>Midterm</option>
                         <option value="Final" <?php echo ($sel_exam == 'Final') ? 'selected' : ''; ?>>Final</option>
                     </select>
@@ -268,24 +557,21 @@ if ($sel_class && $sel_subject) {
             </form>
         </div>
 
-        <div id="importBox" class="card" style="display:none; border:2px dashed #8e44ad; background:#fbf6ff;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; color:#8e44ad;">Bulk Import Marks</h3>
-                <button onclick="document.getElementById('importBox').style.display='none'"
-                    style="border:none; background:none; font-size:1.2rem; cursor:pointer;">&times;</button>
+        <div id="importBox" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; mb-3">
+                <h5 class="fw-bold m-0"><i class="fas fa-cloud-upload-alt me-2 text-primary"></i> Bulk Import Marks</h5>
+                <button onclick="document.getElementById('importBox').style.display='none'" class="btn-close"></button>
             </div>
-            <p style="font-size:0.9rem; color:#666; margin:10px 0;">Upload a CSV file with columns: <strong>Register
-                    No</strong>, <strong>Name (Optional)</strong>, <strong>Mark</strong>.</p>
+            <p class="text-muted small mb-3">Upload CSV with columns: <strong>Register No</strong>, <strong>Name
+                    (Optional)</strong>, <strong>Mark</strong>.</p>
 
-            <form method="POST" enctype="multipart/form-data" style="display:flex; gap:15px; align-items:center;">
+            <form method="POST" enctype="multipart/form-data" class="d-flex gap-2">
                 <input type="hidden" name="class_id" value="<?php echo $sel_class; ?>">
                 <input type="hidden" name="subject_id" value="<?php echo $sel_subject; ?>">
                 <input type="hidden" name="exam_type" value="<?php echo $sel_exam; ?>">
 
-                <input type="file" name="csv_file" accept=".csv" required
-                    style="border:1px solid #ccc; padding:8px; border-radius:4px; background:#fff;">
-                <button type="submit" name="import_marks" class="btn btn-primary" style="background:#8e44ad;">Upload &
-                    Process</button>
+                <input type="file" name="csv_file" class="form-control" accept=".csv" required>
+                <button type="submit" name="import_marks" class="btn btn-primary fw-bold px-4">Upload</button>
             </form>
         </div>
 
@@ -293,26 +579,26 @@ if ($sel_class && $sel_subject) {
 
             <div class="grid-2-col">
                 <div class="stats-grid-mini">
-                    <div class="card stat-card">
+                    <div class="stat-card">
                         <div class="stat-val"><?php echo $stats['avg']; ?></div>
-                        <div class="stat-label">Class Avg</div>
+                        <div class="stat-label">Average Score</div>
                     </div>
-                    <div class="card stat-card">
-                        <div class="stat-val" style="color:#27ae60;"><?php echo $stats['pass']; ?></div>
+                    <div class="stat-card">
+                        <div class="stat-val text-success"><?php echo $stats['pass']; ?></div>
                         <div class="stat-label">Passed</div>
                     </div>
-                    <div class="card stat-card">
-                        <div class="stat-val" style="color:#c0392b;"><?php echo $stats['fail']; ?></div>
+                    <div class="stat-card">
+                        <div class="stat-val text-danger"><?php echo $stats['fail']; ?></div>
                         <div class="stat-label">Failed</div>
                     </div>
-                    <div class="card stat-card">
-                        <div class="stat-val" style="color:#f39c12;"><?php echo $stats['max']; ?></div>
-                        <div class="stat-label">Top Score</div>
+                    <div class="stat-card">
+                        <div class="stat-val text-warning"><?php echo $stats['max']; ?></div>
+                        <div class="stat-label">Highest Mark</div>
                     </div>
                 </div>
 
-                <div class="card viz-card">
-                    <h4 style="margin:0 0 15px 0;">Grade Distribution</h4>
+                <div class="viz-card">
+                    <h5 class="fw-bold mb-3">Grade Distribution</h5>
                     <div class="chart-container">
                         <?php
                         $total_graded = $stats['pass'] + $stats['fail'];
@@ -341,9 +627,10 @@ if ($sel_class && $sel_subject) {
 
                 <div class="card table-card">
                     <div class="card-header-row">
-                        <h3>Marks Entry Roster</h3>
-                        <button type="submit" name="save_changes" class="btn btn-primary">
-                            <i class="fas fa-save"></i> Save All Changes
+                        <h5 class="m-0 fw-bold text-dark"><i class="fas fa-list me-2 text-warning"></i> Student Marks Roster
+                        </h5>
+                        <button type="submit" name="save_changes" class="btn btn-primary fw-bold shadow-sm">
+                            <i class="fas fa-save me-2"></i> Save Changes
                         </button>
                     </div>
 
@@ -351,10 +638,10 @@ if ($sel_class && $sel_subject) {
                         <table class="marks-table">
                             <thead>
                                 <tr>
-                                    <th>Student</th>
+                                    <th>Student Name</th>
                                     <th>Register No</th>
-                                    <th>Input Mark</th>
-                                    <th>Status</th>
+                                    <th>Score Input</th>
+                                    <th>Grade</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -362,14 +649,14 @@ if ($sel_class && $sel_subject) {
                                     <?php while ($row = $students->fetch_assoc()): ?>
                                         <tr>
                                             <td>
-                                                <div class="stu-info">
+                                                <div class="d-flex align-items-center">
                                                     <div class="avatar-circle">
                                                         <?php echo strtoupper(substr($row['student_name'], 0, 1)); ?>
                                                     </div>
                                                     <span class="stu-name"><?php echo $row['student_name']; ?></span>
                                                 </div>
                                             </td>
-                                            <td style="font-family:monospace;"><?php echo $row['school_register_no']; ?></td>
+                                            <td class="font-monospace text-muted"><?php echo $row['school_register_no']; ?></td>
                                             <td>
                                                 <input type="number" step="0.01" min="0" max="100"
                                                     name="marks[<?php echo $row['enrollment_id']; ?>]"
@@ -389,7 +676,8 @@ if ($sel_class && $sel_subject) {
                                     <?php endwhile; ?>
                                 <?php else: ?>
                                     <tr>
-                                        <td colspan="4" style="text-align:center; padding:30px;">No students enrolled.</td>
+                                        <td colspan="4" class="text-center py-5 text-muted">No students found in this class.
+                                        </td>
                                     </tr>
                                 <?php endif; ?>
                             </tbody>
@@ -399,245 +687,17 @@ if ($sel_class && $sel_subject) {
             </form>
 
         <?php else: ?>
-            <div class="empty-state-box">
-                <i class="fas fa-filter"></i>
-                <h3>Ready to Manage Marks</h3>
-                <p>Select a Class, Subject, and Exam Term from the filter bar above to begin.</p>
+            <div class="text-center py-5 bg-white rounded shadow-sm border border-dashed">
+                <i class="fas fa-filter fa-3x text-warning opacity-50 mb-3"></i>
+                <h4 class="text-muted">Ready to Manage Marks</h4>
+                <p class="text-secondary">Please select a Class, Subject, and Exam Term above.</p>
             </div>
         <?php endif; ?>
 
     </div>
 </div>
 
-<style>
-    /* Layout */
-    .dashboard-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
 
-    .filter-card {
-        padding: 20px;
-        border-top: 4px solid #DAA520;
-    }
-
-    .filter-form {
-        display: flex;
-        gap: 15px;
-    }
-
-    .input-group {
-        flex: 1;
-    }
-
-    .input-group label {
-        font-weight: 600;
-        color: #DAA520;
-        display: block;
-        margin-bottom: 5px;
-        font-size: 0.85rem;
-    }
-
-    /* Stats & Viz */
-    .grid-2-col {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-        margin-bottom: 25px;
-    }
-
-    .stats-grid-mini {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 15px;
-    }
-
-    .stat-card {
-        padding: 20px;
-        text-align: center;
-    }
-
-    .stat-val {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #333;
-        line-height: 1;
-    }
-
-    .stat-label {
-        font-size: 0.85rem;
-        color: #888;
-        text-transform: uppercase;
-        margin-top: 5px;
-        letter-spacing: 0.5px;
-    }
-
-    /* Chart Bars */
-    .viz-card {
-        padding: 20px;
-    }
-
-    .bar-group {
-        display: flex;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-
-    .bar-label {
-        width: 30px;
-        font-weight: bold;
-        color: #555;
-    }
-
-    .bar-track {
-        flex: 1;
-        background: #f0f0f0;
-        height: 10px;
-        border-radius: 5px;
-        margin: 0 10px;
-        overflow: hidden;
-    }
-
-    .bar-fill {
-        height: 100%;
-        border-radius: 5px;
-    }
-
-    .bar-count {
-        font-size: 0.85rem;
-        color: #888;
-        width: 20px;
-        text-align: right;
-    }
-
-    /* Table */
-    .table-card {
-        padding: 0;
-    }
-
-    .card-header-row {
-        padding: 15px 25px;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .marks-table th {
-        background: #f9f9f9;
-        padding: 12px 20px;
-        text-align: left;
-        color: #555;
-        text-transform: uppercase;
-        font-size: 0.8rem;
-    }
-
-    .marks-table td {
-        padding: 10px 20px;
-        border-bottom: 1px solid #f0f0f0;
-        vertical-align: middle;
-    }
-
-    .mark-input {
-        width: 80px;
-        padding: 8px;
-        text-align: center;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-weight: bold;
-    }
-
-    .mark-input:focus {
-        border-color: #DAA520;
-        background: #fffcf0;
-        outline: none;
-    }
-
-    .stu-info {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .avatar-circle {
-        width: 32px;
-        height: 32px;
-        background: #DAA520;
-        color: white;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 0.9rem;
-    }
-
-    .status-pill {
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
-
-    .status-pill.pass {
-        background: #e8f5e9;
-        color: #2e7d32;
-    }
-
-    .status-pill.fail {
-        background: #ffebee;
-        color: #c62828;
-    }
-
-    .status-pill.pending {
-        background: #f5f5f5;
-        color: #999;
-    }
-
-    .empty-state-box {
-        text-align: center;
-        padding: 60px;
-        color: #aaa;
-        background: #fff;
-        border-radius: 10px;
-        border: 2px dashed #eee;
-    }
-
-    .empty-state-box i {
-        font-size: 3rem;
-        margin-bottom: 15px;
-        color: #DAA520;
-        opacity: 0.5;
-    }
-
-    .alert-box {
-        padding: 15px;
-        margin-bottom: 20px;
-        border-radius: 5px;
-    }
-
-    .alert-box.success {
-        background: #d4edda;
-        color: #155724;
-        border: 1px solid #c3e6cb;
-    }
-
-    .alert-box.error {
-        background: #f8d7da;
-        color: #721c24;
-        border: 1px solid #f5c6cb;
-    }
-
-    @media(max-width: 900px) {
-        .filter-form {
-            flex-direction: column;
-        }
-
-        .grid-2-col {
-            grid-template-columns: 1fr;
-        }
-    }
-</style>
-<?php include 'includes/footer.php'; ?>
+</html>

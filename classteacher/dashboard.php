@@ -4,7 +4,7 @@ include '../config/db.php';
 include 'includes/header.php';
 
 // 1. AUTHENTICATION
-if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
+if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin'){
     header("Location: ../index.php"); 
     exit(); 
 }
@@ -21,6 +21,8 @@ $cid = $my_class ? $my_class['class_id'] : 0;
 $class_name = $my_class ? $my_class['class_name'] : "No Class Assigned";
 
 $class_stats = ['total'=>0, 'boys'=>0, 'girls'=>0];
+$students_prev = null;
+
 if($cid){
     $class_stats = $conn->query("SELECT 
                             COUNT(*) as total,
@@ -35,7 +37,7 @@ if($cid){
 // ==========================================
 // 3. DATA: SUBJECT TEACHER ROLE (Teaching)
 // ==========================================
-// Fetch subjects explicitly taught by this teacher (across ANY class)
+// UPDATED: Fetch subjects linked via subject_teachers table
 $teaching_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name,
                  (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as total_students,
                  (SELECT COUNT(*) FROM student_marks sm 
@@ -43,21 +45,24 @@ $teaching_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_na
                   WHERE sse.subject_id = s.subject_id AND sm.exam_type = 'Midterm') as graded_count
                  FROM subjects s 
                  JOIN classes c ON s.class_id = c.class_id 
-                 WHERE s.teacher_id = $tid";
+                 JOIN subject_teachers st ON s.subject_id = st.subject_id
+                 WHERE st.teacher_id = $tid";
+
 $my_subjects = $conn->query($teaching_sql);
 $subject_count = $my_subjects->num_rows;
 
-// Calculate total unique students taught (Teaching Load)
+// UPDATED: Calculate total unique students taught (Teaching Load)
 $total_teaching_students = $conn->query("SELECT count(DISTINCT sse.student_id) as c 
                                          FROM student_subject_enrollment sse 
-                                         JOIN subjects s ON sse.subject_id = s.subject_id 
-                                         WHERE s.teacher_id = $tid")->fetch_assoc()['c'];
+                                         JOIN subject_teachers st ON sse.subject_id = st.subject_id 
+                                         WHERE st.teacher_id = $tid")->fetch_assoc()['c'];
 
 // Notices
 $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_teacher', 'subject_teacher') ORDER BY created_at DESC LIMIT 3");
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
     body { background-color: #f4f6f9; overflow-x: hidden; }
     
@@ -104,7 +109,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
                 </div>
                 <?php if($cid): ?>
                 <div>
-                    <a href="../admin/view_master_sheet.php?class_id=<?php echo $cid; ?>" class="btn btn-dark">
+                    <a href="master_marksheet.php" class="btn btn-dark">
                         <i class="fas fa-table me-2"></i> Master Marksheet
                     </a>
                 </div>
@@ -172,7 +177,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
             <div class="row g-4">
                 
                 <div class="col-lg-7">
-                    <div class="card">
+                    <div class="card h-100">
                         <div class="card-header bg-white py-3 border-bottom-0">
                             <h5 class="fw-bold mb-0 text-dark"><i class="fas fa-book me-2 text-warning"></i> My Teaching Subjects</h5>
                         </div>
@@ -217,7 +222,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
                                         </tr>
                                         <?php endwhile; ?>
                                         <?php else: ?>
-                                            <tr><td colspan="4" class="text-center py-4 text-muted">No subjects assigned yet.</td></tr>
+                                            <tr><td colspan="4" class="text-center py-4 text-muted">No teaching subjects assigned yet.</td></tr>
                                         <?php endif; ?>
                                     </tbody>
                                 </table>
@@ -233,7 +238,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
                             <?php if($cid): ?><a href="my_class_students.php" class="btn btn-sm btn-light text-primary">View All</a><?php endif; ?>
                         </div>
                         <div class="card-body p-0">
-                            <?php if($cid && $students_prev->num_rows > 0): ?>
+                            <?php if($cid && $students_prev && $students_prev->num_rows > 0): ?>
                                 <ul class="list-group list-group-flush">
                                 <?php while($stu = $students_prev->fetch_assoc()): ?>
                                     <li class="list-group-item px-4 py-2 border-bottom-0">
@@ -244,7 +249,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
                                                 <span class="fw-bold text-dark d-block"><?php echo $stu['student_name']; ?></span>
                                                 <small class="text-muted font-monospace"><?php echo $stu['school_register_no']; ?></small>
                                             </div>
-                                            <a href="view_student_full.php?student_id=<?php echo $stu['student_id']; ?>" class="text-secondary"><i class="fas fa-chevron-right"></i></a>
+                                            <a href="view_student_full.php?student_id=<?php echo $stu['student_id']; ?>" class="btn btn-sm btn-light text-secondary"><i class="fas fa-chevron-right"></i></a>
                                         </div>
                                     </li>
                                 <?php endwhile; ?>

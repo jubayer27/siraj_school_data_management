@@ -26,6 +26,8 @@ $results = null;
 $stats = ['avg' => 0, 'pass' => 0, 'fail' => 0, 'total' => 0];
 
 if($class_id){
+    // Query joins students -> enrollment -> marks -> subjects
+    // Filters by the student's CURRENT class_id
     $sql = "SELECT st.student_name, st.photo, sub.subject_name, sub.subject_code, sm.exam_type, sm.mark_obtained, sm.grade
             FROM student_marks sm
             JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
@@ -112,15 +114,16 @@ if($class_id){
                     <p class="text-secondary mb-0">Overview for <strong><?php echo $class_name; ?></strong></p>
                 </div>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-outline-dark" onclick="window.print()">
+                    <button class="btn btn-outline-dark shadow-sm" onclick="window.print()">
                         <i class="fas fa-print me-2"></i> Print Report
                     </button>
                 </div>
             </div>
 
             <?php if(!$class_id): ?>
-                <div class="alert alert-warning border-0 shadow-sm">
-                    <i class="fas fa-exclamation-triangle me-2"></i> No class assigned.
+                <div class="alert alert-warning border-0 shadow-sm d-flex align-items-center">
+                    <i class="fas fa-exclamation-triangle me-3 fa-2x"></i>
+                    <div><strong>No Class Assigned.</strong><br>You are not currently listed as a Class Teacher for any active class.</div>
                 </div>
             <?php else: ?>
 
@@ -183,7 +186,7 @@ if($class_id){
                             </div>
                         </div>
                         <div class="col-md-3 d-flex align-items-end">
-                            <button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(135deg, #FFD700, #FDB931); border:none; color:black; font-weight:600;">Apply Filters</button>
+                            <button type="submit" class="btn btn-warning w-100 fw-bold shadow-sm">Apply Filters</button>
                         </div>
                     </form>
                 </div>
@@ -228,7 +231,7 @@ if($class_id){
                                     </tr>
                                     <?php endwhile; ?>
                                 <?php else: ?>
-                                    <tr><td colspan="5" class="text-center py-5 text-muted">No records found matching your criteria.</td></tr>
+                                    <tr><td colspan="5" class="text-center py-5 text-muted">No marks found matching your criteria.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>

@@ -62,7 +62,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
         <li class="menu-header">EXAMS & RESULTS</li>
 
         <li>
-            <a href="manage_exams.php" class="<?php echo $current_page == 'manage_exams.php' ? 'active' : ''; ?>">
+            <a href="exam_setup.php" class="<?php echo $current_page == 'exam_setup.php' ? 'active' : ''; ?>">
                 <i class="fas fa-file-signature"></i> <span>Exam Setup</span>
             </a>
         </li>

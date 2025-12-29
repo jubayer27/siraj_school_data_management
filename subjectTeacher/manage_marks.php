@@ -3,7 +3,7 @@ session_start();
 include '../config/db.php';
 
 // 1. AUTHENTICATION
-if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin') {
+if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'class_teacher') {
     header("Location: ../index.php");
     exit();
 }
@@ -12,16 +12,22 @@ $teacher_id = $_SESSION['user_id'];
 $alert_msg = "";
 $alert_type = "";
 
+// Helper to check subject ownership (Updated for Many-to-Many)
+function is_authorized($conn, $sid, $tid)
+{
+    $q = $conn->query("SELECT 1 FROM subject_teachers WHERE subject_id = $sid AND teacher_id = $tid");
+    return ($q->num_rows > 0);
+}
+
 // ==========================================
 // 2. EXPORT LOGIC
 // ==========================================
 if (isset($_POST['export_csv'])) {
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
 
-    $check_auth = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid AND teacher_id = $teacher_id");
-    if ($check_auth->num_rows > 0) {
-        $sub_info = $check_auth->fetch_assoc();
+    if (is_authorized($conn, $sid, $teacher_id)) {
+        $sub_info = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid")->fetch_assoc();
 
         $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
                 FROM students st 
@@ -52,28 +58,32 @@ include 'includes/header.php';
 // 3. IMPORT LOGIC
 // ==========================================
 if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
     $filename = $_FILES['csv_file']['tmp_name'];
 
-    $check_auth = $conn->query("SELECT subject_id FROM subjects WHERE subject_id = $sid AND teacher_id = $teacher_id");
-
-    if ($check_auth->num_rows > 0 && $_FILES['csv_file']['size'] > 0) {
+    if (is_authorized($conn, $sid, $teacher_id) && $_FILES['csv_file']['size'] > 0) {
         $file = fopen($filename, "r");
         $count = 0;
-        fgetcsv($file);
+        fgetcsv($file); // Skip Header
+
         while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
-            $reg_no = $data[0];
-            $mark_val = floatval($data[2]);
-            if ($data[2] === "")
+            $reg_no = trim($data[0]);
+
+            if (!isset($data[2]) || $data[2] === "")
                 continue;
+            $mark_val = floatval($data[2]);
 
             $g = ($mark_val >= 80) ? 'A' : (($mark_val >= 60) ? 'B' : (($mark_val >= 40) ? 'C' : 'F'));
 
-            $find_stu = $conn->query("SELECT sse.enrollment_id FROM students st JOIN student_subject_enrollment sse ON st.student_id = sse.student_id WHERE st.school_register_no = '$reg_no' AND sse.subject_id = $sid");
+            $find_stu = $conn->query("SELECT sse.enrollment_id 
+                                      FROM students st 
+                                      JOIN student_subject_enrollment sse ON st.student_id = sse.student_id 
+                                      WHERE st.school_register_no = '$reg_no' AND sse.subject_id = $sid");
 
             if ($find_stu->num_rows > 0) {
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
+
                 $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
                 if ($chk->num_rows > 0) {
                     $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
@@ -87,7 +97,7 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
             }
         }
         fclose($file);
-        $alert_msg = "Import Successful! Updated $count student marks.";
+        $alert_msg = "Import Successful! Updated $count marks.";
         $alert_type = "success";
     } else {
         $alert_msg = "Error: Invalid file or unauthorized.";
@@ -99,11 +109,11 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 // 4. MANUAL SAVE LOGIC
 // ==========================================
 if (isset($_POST['save_marks'])) {
-    $sid = $_POST['subject_id'];
+    $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
+    $count = 0;
 
     if (isset($_POST['marks'])) {
-        $count = 0;
         foreach ($_POST['marks'] as $eid => $val) {
             if ($val === "")
                 continue;
@@ -127,21 +137,23 @@ if (isset($_POST['save_marks'])) {
 }
 
 // 5. FETCH DATA
+// Updated for Many-to-Many
 $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
               FROM subjects s 
+              JOIN subject_teachers st ON s.subject_id = st.subject_id
               JOIN classes c ON s.class_id = c.class_id 
-              WHERE s.teacher_id = $teacher_id";
+              WHERE st.teacher_id = $teacher_id 
+              ORDER BY c.class_name, s.subject_name";
 $my_subjects = $conn->query($sub_query);
 
-$sel_sub = isset($_GET['subject_id']) ? $_GET['subject_id'] : '';
+$sel_sub = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : '';
 $sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
 
 $students = null;
 $stats = ['total' => 0, 'graded' => 0, 'avg' => 0];
 
 if ($sel_sub) {
-    $check_own = $conn->query("SELECT * FROM subjects WHERE subject_id = $sel_sub AND teacher_id = $teacher_id");
-    if ($check_own->num_rows > 0) {
+    if (is_authorized($conn, $sel_sub, $teacher_id)) {
         $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_obtained, sm.grade
                 FROM students st
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
@@ -298,8 +310,7 @@ if ($sel_sub) {
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php
-                                if ($students->num_rows > 0):
+                                <?php if ($students->num_rows > 0):
                                     while ($row = $students->fetch_assoc()):
                                         $has_mark = ($row['mark_obtained'] !== null);
                                         ?>
@@ -407,12 +418,10 @@ if ($sel_sub) {
     .select-wrapper select {
         width: 100%;
         padding: 12px 40px;
-        /* Space for icons */
         font-size: 1rem;
         border: 1px solid #ddd;
         border-radius: 8px;
         appearance: none;
-        /* Remove default arrow */
         background: #fff;
         color: #333;
         font-weight: 500;

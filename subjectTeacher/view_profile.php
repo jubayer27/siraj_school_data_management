@@ -13,19 +13,25 @@ if (!isset($_GET['student_id'])) {
     echo "<script>window.history.back();</script>";
     exit();
 }
-$sid = $_GET['student_id'];
+$sid = intval($_GET['student_id']);
 $teacher_id = $_SESSION['user_id'];
 
-// 2. SECURITY CHECK
-// Ensure teacher teaches this student
+// 2. SECURITY CHECK (Updated for Many-to-Many)
+// Ensure the logged-in teacher is assigned to at least one subject this student takes.
 if ($_SESSION['role'] == 'subject_teacher') {
-    $access_check = $conn->query("SELECT count(*) as c 
-                                  FROM student_subject_enrollment sse 
-                                  JOIN subjects s ON sse.subject_id = s.subject_id 
-                                  WHERE sse.student_id = $sid AND s.teacher_id = $teacher_id")->fetch_assoc()['c'];
+    $access_check_sql = "SELECT count(*) as c 
+                         FROM student_subject_enrollment sse 
+                         JOIN subject_teachers st ON sse.subject_id = st.subject_id 
+                         WHERE sse.student_id = $sid AND st.teacher_id = $teacher_id";
+                         
+    $access_check = $conn->query($access_check_sql)->fetch_assoc()['c'];
 
     if ($access_check == 0) {
-        echo "<div class='main-content' style='margin-left:260px; padding:30px;'><div class='alert alert-danger'>Access Denied: You do not teach this student.</div></div>";
+        echo "<div class='main-content' style='margin-left:260px; padding:30px;'>
+                <div class='alert alert-danger shadow-sm border-0'>
+                    <i class='fas fa-lock me-2'></i> <strong>Access Denied:</strong> You are not assigned to teach this student.
+                </div>
+              </div>";
         exit();
     }
 }
@@ -37,11 +43,13 @@ $student = $conn->query($sql)->fetch_assoc();
 if (!$student) die("Student not found.");
 
 // 4. FETCH MARKS (Restricted to Subject Teacher's Subjects)
+// Updated to filter by subject_teachers junction table
 $marks_sql = "SELECT s.subject_name, s.subject_code, sm.exam_type, sm.mark_obtained, sm.grade, sm.created_at
               FROM student_marks sm
               JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
               JOIN subjects s ON sse.subject_id = s.subject_id
-              WHERE sse.student_id = $sid AND s.teacher_id = $teacher_id
+              JOIN subject_teachers st ON s.subject_id = st.subject_id
+              WHERE sse.student_id = $sid AND st.teacher_id = $teacher_id
               ORDER BY sm.created_at DESC";
 $marks_res = $conn->query($marks_sql);
 ?>
@@ -77,7 +85,7 @@ $marks_res = $conn->query($marks_sql);
     .section-title { font-size: 1rem; font-weight: 700; color: #DAA520; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
 
     /* READ ONLY INDICATOR */
-    .read-only-badge { font-size: 0.7rem; background: #eee; color: #777; padding: 2px 8px; border-radius: 4px; margin-left: 10px; }
+    .read-only-badge { font-size: 0.7rem; background: #eee; color: #777; padding: 2px 8px; border-radius: 4px; margin-left: 10px; vertical-align: middle; }
 
     @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }
 </style>

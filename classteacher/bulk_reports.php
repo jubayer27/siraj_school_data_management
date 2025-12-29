@@ -42,10 +42,7 @@ if ($export_format && $cid) {
 
     // --- REPORT 1: CLASS MASTER REPORT ---
     if ($report_type == 'class_master') {
-        // Fetch Students
         $res = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY student_name");
-
-        // Define Headers
         $headers = ['No', 'Register No', 'Student Name', 'Gender', 'IC Number', 'Enrolled Subjects'];
 
         if ($export_format == 'excel') {
@@ -60,7 +57,6 @@ if ($export_format && $cid) {
         $i = 1;
         while ($row = $res->fetch_assoc()) {
             $sid = $row['student_id'];
-            // Fetch enrolled subjects for this student
             $sub_q = $conn->query("SELECT s.subject_name FROM subjects s JOIN student_subject_enrollment sse ON s.subject_id=sse.subject_id WHERE sse.student_id=$sid");
             $subjects = [];
             while ($s = $sub_q->fetch_assoc())
@@ -87,8 +83,6 @@ if ($export_format && $cid) {
     // --- REPORT 2: INDIVIDUAL STUDENT REPORT ---
     elseif ($report_type == 'student_individual' && $student_id) {
         $stu = $conn->query("SELECT * FROM students WHERE student_id = $student_id")->fetch_assoc();
-
-        // We will dump Profile + Marks
         $headers = ['Section', 'Field', 'Value', 'Extra'];
 
         if ($export_format == 'excel')
@@ -120,7 +114,7 @@ if ($export_format && $cid) {
         if ($export_format == 'excel')
             echo "<tr><td colspan='4'><b>Academic Results</b></td></tr><tr><td><b>Subject</b></td><td><b>Exam</b></td><td><b>Mark</b></td><td><b>Grade</b></td></tr>";
         else {
-            fputcsv($output, []); // Spacer
+            fputcsv($output, []);
             fputcsv($output, ['ACADEMIC RESULTS']);
             fputcsv($output, ['Subject', 'Exam', 'Mark', 'Grade']);
         }
@@ -140,15 +134,22 @@ if ($export_format && $cid) {
             fclose($output);
     }
 
-    // --- REPORT 3: TEACHER & SUBJECT REPORT ---
+    // --- REPORT 3: TEACHER & SUBJECT REPORT (UPDATED) ---
     elseif ($report_type == 'teacher_report') {
-        $sql = "SELECT s.subject_name, s.subject_code, u.full_name, u.phone, 
+        // Query updated for Many-to-Many Teachers
+        $sql = "SELECT s.subject_name, s.subject_code, 
+                GROUP_CONCAT(u.full_name SEPARATOR ', ') as teacher_names,
+                GROUP_CONCAT(u.phone SEPARATOR ', ') as teacher_phones,
                 (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as enrollment
-                FROM subjects s LEFT JOIN users u ON s.teacher_id = u.user_id 
-                WHERE s.class_id = $cid ORDER BY s.subject_name";
+                FROM subjects s 
+                LEFT JOIN subject_teachers st ON s.subject_id = st.subject_id
+                LEFT JOIN users u ON st.teacher_id = u.user_id 
+                WHERE s.class_id = $cid 
+                GROUP BY s.subject_id
+                ORDER BY s.subject_name";
         $res = $conn->query($sql);
 
-        $headers = ['Subject Name', 'Code', 'Teacher Name', 'Teacher Contact', 'Total Students'];
+        $headers = ['Subject Name', 'Code', 'Teacher Name(s)', 'Contact(s)', 'Total Students'];
 
         if ($export_format == 'excel') {
             echo "<table border='1'><tr>";
@@ -160,7 +161,7 @@ if ($export_format && $cid) {
         }
 
         while ($row = $res->fetch_assoc()) {
-            $data = [$row['subject_name'], $row['subject_code'], $row['full_name'], $row['phone'], $row['enrollment']];
+            $data = [$row['subject_name'], $row['subject_code'], $row['teacher_names'], $row['teacher_phones'], $row['enrollment']];
             if ($export_format == 'excel') {
                 echo "<tr>";
                 foreach ($data as $d)
@@ -372,10 +373,9 @@ if ($export_format && $cid) {
                         </table>
 
                         <?php
-                        // --- VIEW 2: INDIVIDUAL STUDENT REPORT (Search & View) ---
+                        // --- VIEW 2: INDIVIDUAL STUDENT REPORT ---
                     elseif ($report_type == 'student_individual'):
 
-                        // 2A. SHOW SEARCH RESULTS IF NO ID
                         if (!isset($_GET['student_id'])):
                             $search = isset($_GET['search_query']) ? $_GET['search_query'] : '';
                             if ($search) {
@@ -397,7 +397,6 @@ if ($export_format && $cid) {
                                 echo "<div class='alert alert-info'>Please use the search bar on the menu to find a student.</div>";
                             }
 
-                            // 2B. SHOW ACTUAL REPORT IF ID EXISTS
                         else:
                             $student_id = $_GET['student_id'];
                             $stu = $conn->query("SELECT * FROM students WHERE student_id = $student_id")->fetch_assoc();
@@ -462,12 +461,18 @@ if ($export_format && $cid) {
                         <?php endif; ?>
 
                         <?php
-                        // --- VIEW 3: TEACHER & SUBJECT REPORT ---
+                        // --- VIEW 3: TEACHER & SUBJECT REPORT (UPDATED) ---
                     elseif ($report_type == 'teacher_report'):
-                        $sql = "SELECT s.subject_name, s.subject_code, u.full_name, u.phone, 
+                        $sql = "SELECT s.subject_name, s.subject_code, 
+                            GROUP_CONCAT(u.full_name SEPARATOR ', ') as teacher_names,
+                            GROUP_CONCAT(u.phone SEPARATOR ', ') as teacher_phones,
                             (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as enrollment
-                            FROM subjects s LEFT JOIN users u ON s.teacher_id = u.user_id 
-                            WHERE s.class_id = $cid ORDER BY s.subject_name";
+                            FROM subjects s 
+                            LEFT JOIN subject_teachers st ON s.subject_id = st.subject_id
+                            LEFT JOIN users u ON st.teacher_id = u.user_id 
+                            WHERE s.class_id = $cid 
+                            GROUP BY s.subject_id
+                            ORDER BY s.subject_name";
                         $res = $conn->query($sql);
                         ?>
                         <h4 class="fw-bold mb-3">Teacher & Subject Overview</h4>
@@ -476,7 +481,7 @@ if ($export_format && $cid) {
                                 <tr>
                                     <th>Subject Name</th>
                                     <th>Code</th>
-                                    <th>Assigned Teacher</th>
+                                    <th>Assigned Teacher(s)</th>
                                     <th>Contact</th>
                                     <th>Students Enrolled</th>
                                 </tr>
@@ -486,9 +491,9 @@ if ($export_format && $cid) {
                                     <tr>
                                         <td class="fw-bold"><?php echo $row['subject_name']; ?></td>
                                         <td><?php echo $row['subject_code']; ?></td>
-                                        <td><?php echo $row['full_name'] ? $row['full_name'] : '<span class="text-danger">Unassigned</span>'; ?>
+                                        <td><?php echo $row['teacher_names'] ? $row['teacher_names'] : '<span class="text-danger">Unassigned</span>'; ?>
                                         </td>
-                                        <td><?php echo $row['phone']; ?></td>
+                                        <td><?php echo $row['teacher_phones']; ?></td>
                                         <td class="text-center fw-bold"><?php echo $row['enrollment']; ?></td>
                                     </tr>
                                 <?php endwhile; ?>
