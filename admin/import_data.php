@@ -1,5 +1,5 @@
 <?php
-// ENABLE ERROR REPORTING
+// ENABLE ERROR REPORTING FOR DEBUGGING
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
@@ -27,9 +27,10 @@ function clean($conn, $str)
 // 2. Convert Date (DD/MM/YYYY -> YYYY-MM-DD)
 function formatDate($dateStr)
 {
-    $dateStr = trim($dateStr);
-    if (empty($dateStr) || $dateStr == '-' || $dateStr == 'TIADA') {
-        return "NULL"; // Returns string "NULL" for SQL
+    $dateStr = trim($dateStr ?? '');
+    // Check for empty or invalid placeholder dates
+    if (empty($dateStr) || $dateStr == '-' || strtoupper($dateStr) == 'TIADA' || strtoupper($dateStr) == 'NULL') {
+        return "NULL"; // Returns SQL NULL keyword
     }
     // Replace / or . with - to help PHP recognize DD-MM-YYYY
     $dateStr = str_replace(['/', '.'], '-', $dateStr);
@@ -38,7 +39,8 @@ function formatDate($dateStr)
     if ($timestamp === false) {
         return "NULL";
     }
-    return "'" . date('Y-m-d', $timestamp) . "'"; // Returns quoted date '2025-01-01'
+    // Returns quoted date string for SQL, e.g., '2025-01-01'
+    return "'" . date('Y-m-d', $timestamp) . "'";
 }
 
 // 2. HANDLE IMPORT
@@ -59,166 +61,78 @@ if (isset($_POST['import_data'])) {
                 continue; // Skip Empty Rows
 
             // ====================================================
-            // TYPE 1: STAFF / USERS
+            // TYPE A: STUDENTS (FULL PROFILE - 40 Columns)
             // ====================================================
-            if ($type == 'users') {
-                if (count($data) < 7)
-                    continue;
-
-                $fname = clean($conn, $data[0]);
-                $uname = clean($conn, $data[1]);
-                $pass = password_hash(clean($conn, $data[2]), PASSWORD_DEFAULT);
-                $role = clean($conn, $data[3]);
-                $staffid = clean($conn, $data[4]);
-                $ic = clean($conn, $data[5]);
-                $phone = clean($conn, $data[6]);
-
-                $chk = $conn->query("SELECT user_id FROM users WHERE username = '$uname'");
-                if ($chk->num_rows == 0) {
-                    $sql = "INSERT INTO users (full_name, username, password, role, teacher_id_no, ic_no, phone) 
-                            VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone')";
-                    if ($conn->query($sql))
-                        $count++;
-                }
-            }
-
-            // ====================================================
-            // TYPE 2: CLASSES
-            // ====================================================
-            elseif ($type == 'classes') {
-                if (count($data) < 3)
-                    continue;
-
-                $cname = clean($conn, $data[0]);
-                $year = intval($data[1]);
-                $staffid = clean($conn, $data[2]);
-
-                $tid = "NULL";
-                if ($staffid) {
-                    $tq = $conn->query("SELECT user_id FROM users WHERE teacher_id_no = '$staffid' LIMIT 1");
-                    if ($tq->num_rows > 0)
-                        $tid = $tq->fetch_assoc()['user_id'];
-                }
-
-                $chk = $conn->query("SELECT class_id FROM classes WHERE class_name = '$cname' AND year = $year");
-                if ($chk->num_rows == 0) {
-                    $sql = "INSERT INTO classes (class_name, year, class_teacher_id) VALUES ('$cname', $year, $tid)";
-                    if ($conn->query($sql))
-                        $count++;
-                }
-            }
-
-            // ====================================================
-            // TYPE 3: SUBJECTS
-            // ====================================================
-            elseif ($type == 'subjects') {
-                if (count($data) < 3)
-                    continue;
-
-                $sname = clean($conn, $data[0]);
-                $code = clean($conn, $data[1]);
-                $cname = clean($conn, $data[2]);
-                $staffid = isset($data[3]) ? clean($conn, $data[3]) : '';
-
-                $cid = "NULL";
-                if ($cname) {
-                    $cq = $conn->query("SELECT class_id FROM classes WHERE class_name = '$cname' LIMIT 1");
-                    if ($cq->num_rows > 0)
-                        $cid = $cq->fetch_assoc()['class_id'];
-                }
-
-                if ($cid != "NULL") {
-                    $chk = $conn->query("SELECT subject_id FROM subjects WHERE subject_code = '$code' AND class_id = $cid");
-                    if ($chk->num_rows == 0) {
-                        $sql = "INSERT INTO subjects (subject_name, subject_code, class_id) VALUES ('$sname', '$code', $cid)";
-                        if ($conn->query($sql)) {
-                            $count++;
-                            if ($staffid) {
-                                $new_sub_id = $conn->insert_id;
-                                $tq = $conn->query("SELECT user_id FROM users WHERE teacher_id_no = '$staffid'");
-                                if ($tq->num_rows > 0) {
-                                    $tid = $tq->fetch_assoc()['user_id'];
-                                    $conn->query("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES ($new_sub_id, $tid)");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ====================================================
-            // TYPE 4: STUDENTS (FULL PROFILE)
-            // ====================================================
-            elseif ($type == 'students') {
+            if ($type == 'students') {
                 if (count($data) < 5)
-                    continue;
+                    continue; // Minimal check
 
-                // 1. Identity
-                $reg = clean($conn, $data[0]);
+                // --- 1. Identity & Class ---
+                $reg_no = clean($conn, $data[0]);
                 $name = clean($conn, $data[1]);
                 $ic = clean($conn, $data[2]);
                 $gender = clean($conn, $data[3]);
-                $cname = clean($conn, $data[4]);
+                $class_name = clean($conn, $data[4]); // Linker
 
-                // 2. Personal (Use formatDate function)
-                $dob = formatDate($data[5]); // FIXED: Converts Date
+                // --- 2. Personal Details (Use formatDate for dates) ---
+                $dob = formatDate($data[5]); // FIXED: Converts DD/MM/YYYY to YYYY-MM-DD
                 $pob = clean($conn, $data[6]);
                 $race = clean($conn, $data[7]);
-                $rel = clean($conn, $data[8]);
+                $religion = clean($conn, $data[8]);
                 $nation = clean($conn, $data[9]);
                 $phone = clean($conn, $data[10]);
-                $addr = clean($conn, $data[11]);
-                $enroll = formatDate($data[12]); // FIXED: Converts Date
-                $prev = clean($conn, $data[13]);
-                $bcert = clean($conn, $data[14]);
+                $address = clean($conn, $data[11]);
+                $enroll_date = formatDate($data[12]); // FIXED: Converts DD/MM/YYYY to YYYY-MM-DD
+                $prev_sch = clean($conn, $data[13]);
+                $birth_cert = clean($conn, $data[14]);
 
-                // 3. Father
-                $fname = clean($conn, $data[15]);
-                $fic = clean($conn, $data[16]);
-                $fphone = clean($conn, $data[17]);
-                $fjob = clean($conn, $data[18]);
-                $fsal = floatval(clean($conn, $data[19]));
+                // --- 3. Family (Father) ---
+                $f_name = clean($conn, $data[15]);
+                $f_ic = clean($conn, $data[16]);
+                $f_phone = clean($conn, $data[17]);
+                $f_job = clean($conn, $data[18]);
+                $f_sal = floatval($data[19]);
 
-                // 4. Mother
-                $mname = clean($conn, $data[20]);
-                $mic = clean($conn, $data[21]);
-                $mphone = clean($conn, $data[22]);
-                $mjob = clean($conn, $data[23]);
-                $msal = floatval(clean($conn, $data[24]));
+                // --- 4. Family (Mother) ---
+                $m_name = clean($conn, $data[20]);
+                $m_ic = clean($conn, $data[21]);
+                $m_phone = clean($conn, $data[22]);
+                $m_job = clean($conn, $data[23]);
+                $m_sal = floatval($data[24]);
 
-                // 5. Guardian
-                $gname = clean($conn, $data[25]);
-                $gic = clean($conn, $data[26]);
-                $gphone = clean($conn, $data[27]);
-                $gjob = clean($conn, $data[28]);
-                $gsal = floatval(clean($conn, $data[29]));
+                // --- 5. Family (Guardian) ---
+                $g_name = clean($conn, $data[25]);
+                $g_ic = clean($conn, $data[26]);
+                $g_phone = clean($conn, $data[27]);
+                $g_job = clean($conn, $data[28]);
+                $g_sal = floatval($data[29]);
 
-                // 6. Status
+                // --- 6. Status ---
                 $marital = clean($conn, $data[30]);
                 $orphan = clean($conn, $data[31]);
-                $baitul = clean($conn, $data[32]);
+                $baitulmal = clean($conn, $data[32]);
 
-                // 7. Co-Curriculum
+                // --- 7. Co-Curriculum ---
                 $house = clean($conn, $data[33]);
                 $uniform = clean($conn, $data[34]);
-                $upos = clean($conn, $data[35]);
+                $u_pos = clean($conn, $data[35]);
                 $club = clean($conn, $data[36]);
-                $cpos = clean($conn, $data[37]);
+                $c_pos = clean($conn, $data[37]);
                 $sport = clean($conn, $data[38]);
-                $spos = clean($conn, $data[39]);
+                $s_pos = clean($conn, $data[39]);
 
-                // Logic: Class ID
+                // LOGIC: Find Class ID
                 $cid = "NULL";
-                if ($cname) {
-                    $cq = $conn->query("SELECT class_id FROM classes WHERE class_name = '$cname' LIMIT 1");
+                if ($class_name) {
+                    $cq = $conn->query("SELECT class_id FROM classes WHERE class_name = '$class_name'");
                     if ($cq->num_rows > 0)
                         $cid = $cq->fetch_assoc()['class_id'];
                 }
 
-                // Check & Insert
-                $chk = $conn->query("SELECT student_id FROM students WHERE school_register_no = '$reg'");
+                // LOGIC: Insert if Reg No doesn't exist
+                $chk = $conn->query("SELECT student_id FROM students WHERE school_register_no = '$reg_no'");
                 if ($chk->num_rows == 0) {
-                    // Note: $dob and $enroll are already quoted by formatDate() or are "NULL"
+                    // NOTE: $dob and $enroll_date are NOT quoted here because formatDate() adds the quotes
                     $sql = "INSERT INTO students (
                         school_register_no, student_name, ic_no, gender, class_id, 
                         birthdate, birth_place, race, religion, nationality, phone, address, enrollment_date, previous_school, birth_cert_no,
@@ -228,19 +142,111 @@ if (isset($_POST['import_data'])) {
                         parents_marital_status, is_orphan, is_baitulmal_recipient,
                         sports_house, uniform_unit, uniform_position, club_association, club_position, sports_game, sports_position
                     ) VALUES (
-                        '$reg', '$name', '$ic', '$gender', $cid,
-                        $dob, '$pob', '$race', '$rel', '$nation', '$phone', '$addr', $enroll, '$prev', '$bcert',
-                        '$fname', '$fic', '$fphone', '$fjob', $fsal,
-                        '$mname', '$mic', '$mphone', '$mjob', $msal,
-                        '$gname', '$gic', '$gphone', '$gjob', $gsal,
-                        '$marital', '$orphan', '$baitul',
-                        '$house', '$uniform', '$upos', '$club', '$cpos', '$sport', '$spos'
+                        '$reg_no', '$name', '$ic', '$gender', $cid,
+                        $dob, '$pob', '$race', '$religion', '$nation', '$phone', '$address', $enroll_date, '$prev_sch', '$birth_cert',
+                        '$f_name', '$f_ic', '$f_phone', '$f_job', $f_sal,
+                        '$m_name', '$m_ic', '$m_phone', '$m_job', $m_sal,
+                        '$g_name', '$g_ic', '$g_phone', '$g_job', $g_sal,
+                        '$marital', '$orphan', '$baitulmal',
+                        '$house', '$uniform', '$u_pos', '$club', '$c_pos', '$sport', '$s_pos'
                     )";
-
                     if ($conn->query($sql))
                         $count++;
                     else
                         echo "<div class='alert alert-danger'>Error importing $name: " . $conn->error . "</div>";
+                }
+            }
+
+            // ====================================================
+            // TYPE B: USERS / STAFF (Full Details)
+            // ====================================================
+            elseif ($type == 'users') {
+                if (count($data) < 7)
+                    continue;
+
+                $fname = clean($conn, $data[0]);
+                $uname = clean($conn, $data[1]);
+                $pass = password_hash(clean($conn, $data[2]), PASSWORD_DEFAULT);
+                $role = strtolower(clean($conn, $data[3]));
+                $staffid = clean($conn, $data[4]);
+                $ic = clean($conn, $data[5]);
+                $phone = clean($conn, $data[6]);
+
+                $chk = $conn->query("SELECT user_id FROM users WHERE username = '$uname'");
+                if ($chk->num_rows == 0) {
+                    $conn->query("INSERT INTO users (full_name, username, password, role, teacher_id_no, ic_no, phone) 
+                                  VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone')");
+                    $count++;
+                }
+            }
+
+            // ====================================================
+            // TYPE C: CLASSES (With Teacher Linking)
+            // ====================================================
+            elseif ($type == 'classes') {
+                if (count($data) < 3)
+                    continue;
+
+                $name = clean($conn, $data[0]);
+                $year = intval($data[1]);
+                $teacher_staff_id = clean($conn, $data[2]);
+
+                $tid = "NULL";
+                if ($teacher_staff_id) {
+                    $tq = $conn->query("SELECT user_id FROM users WHERE teacher_id_no = '$teacher_staff_id'");
+                    if ($tq->num_rows > 0)
+                        $tid = $tq->fetch_assoc()['user_id'];
+                }
+
+                $chk = $conn->query("SELECT class_id FROM classes WHERE class_name = '$name' AND year = $year");
+                if ($chk->num_rows == 0) {
+                    $conn->query("INSERT INTO classes (class_name, year, class_teacher_id) VALUES ('$name', $year, $tid)");
+                    $count++;
+                }
+            }
+
+            // ====================================================
+            // TYPE D: SUBJECTS (UPDATED FOR MULTIPLE TEACHERS)
+            // ====================================================
+            elseif ($type == 'subjects') {
+                if (count($data) < 3)
+                    continue;
+
+                $name = clean($conn, $data[0]);
+                $code = clean($conn, $data[1]);
+                $cname = clean($conn, $data[2]);
+                $tsid = isset($data[3]) ? clean($conn, $data[3]) : '';
+
+                $cid = "NULL";
+                if ($cname) {
+                    $cq = $conn->query("SELECT class_id FROM classes WHERE class_name = '$cname'");
+                    if ($cq->num_rows > 0)
+                        $cid = $cq->fetch_assoc()['class_id'];
+                }
+
+                $chk = $conn->query("SELECT subject_id FROM subjects WHERE subject_code = '$code'");
+
+                if ($chk->num_rows == 0) {
+                    // A. Insert Subject
+                    if ($cid != "NULL") {
+                        $sql = "INSERT INTO subjects (subject_name, subject_code, class_id) VALUES ('$name', '$code', $cid)";
+                    } else {
+                        $sql = "INSERT INTO subjects (subject_name, subject_code) VALUES ('$name', '$code')";
+                    }
+
+                    if ($conn->query($sql)) {
+                        $new_sub_id = $conn->insert_id;
+                        $count++;
+
+                        // B. Resolve Teacher ID & Insert to Junction Table
+                        if ($tsid) {
+                            $tq = $conn->query("SELECT user_id FROM users WHERE teacher_id_no = '$tsid'");
+                            if ($tq->num_rows > 0) {
+                                $tid = $tq->fetch_assoc()['user_id'];
+                                $conn->query("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES ($new_sub_id, $tid)");
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -248,7 +254,7 @@ if (isset($_POST['import_data'])) {
         $msg = "Success! Imported $count records.";
         $msg_type = "success";
     } else {
-        $msg = "Error: File upload failed.";
+        $msg = "Error: File is empty or invalid.";
         $msg_type = "error";
     }
 }
@@ -277,6 +283,7 @@ if (isset($_POST['import_data'])) {
         padding: 30px !important;
     }
 
+    /* Import Card */
     .import-card {
         border: none;
         border-radius: 12px;
@@ -290,6 +297,7 @@ if (isset($_POST['import_data'])) {
         border-radius: 12px 12px 0 0;
     }
 
+    /* Code Box */
     .code-box {
         background: #2d2d2d;
         color: #76ff03;
@@ -312,41 +320,57 @@ if (isset($_POST['import_data'])) {
 
 <div class="wrapper">
     <?php include 'includes/sidebar.php'; ?>
+
     <div class="main-content">
         <div class="container-fluid">
-            <h2 class="fw-bold text-dark mb-4">Advanced Bulk Import</h2>
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark mb-0">Advanced Bulk Import</h2>
+                    <p class="text-secondary mb-0">Upload complete datasets via CSV.</p>
+                </div>
+            </div>
 
             <?php if ($msg): ?>
-                <div class="alert alert-<?php echo ($msg_type == 'success') ? 'success' : 'danger'; ?> mb-4">
+                <div
+                    class="alert alert-<?php echo ($msg_type == 'success') ? 'success' : 'danger'; ?> d-flex align-items-center mb-4">
+                    <i
+                        class="fas fa-<?php echo ($msg_type == 'success') ? 'check-circle' : 'exclamation-triangle'; ?> me-2"></i>
                     <?php echo $msg; ?>
                 </div>
             <?php endif; ?>
 
             <div class="row g-4">
+
                 <div class="col-lg-5">
                     <div class="card import-card h-100">
                         <div class="card-header-custom">
-                            <h5 class="m-0 fw-bold"><i class="fas fa-file-csv me-2"></i> Import Wizard</h5>
+                            <h5 class="m-0 fw-bold"><i class="fas fa-cloud-upload-alt me-2"></i> Import Wizard</h5>
                         </div>
                         <div class="card-body p-4">
                             <form method="POST" enctype="multipart/form-data">
+
                                 <div class="mb-4">
                                     <label class="fw-bold mb-2">1. Select Data Category</label>
                                     <select name="import_type" class="form-select" required
                                         onchange="updateGuide(this.value)">
                                         <option value="">-- Choose Category --</option>
-                                        <option value="users">1. Staff / Users</option>
-                                        <option value="classes">2. Classes</option>
-                                        <option value="subjects">3. Subjects</option>
-                                        <option value="students">4. Students (Full Profile)</option>
+                                        <option value="users">Staff / Users (Import First)</option>
+                                        <option value="classes">Classes (Import Second)</option>
+                                        <option value="subjects">Subjects (Import Third)</option>
+                                        <option value="students">Students (Import Last)</option>
                                     </select>
                                 </div>
+
                                 <div class="mb-4">
                                     <label class="fw-bold mb-2">2. Upload CSV File</label>
                                     <input type="file" name="import_file" class="form-control" accept=".csv" required>
+                                    <div class="form-text">File must be .csv format (Comma Delimited).</div>
                                 </div>
-                                <button type="submit" name="import_data"
-                                    class="btn btn-primary fw-bold w-100 py-2">Start Import</button>
+
+                                <button type="submit" name="import_data" class="btn btn-primary fw-bold w-100 py-2">
+                                    Start Import Process
+                                </button>
                             </form>
                         </div>
                     </div>
@@ -355,48 +379,70 @@ if (isset($_POST['import_data'])) {
                 <div class="col-lg-7">
                     <div class="card import-card h-100">
                         <div class="card-header bg-white py-3 border-bottom">
-                            <h5 class="fw-bold m-0 text-dark"><i class="fas fa-table me-2 text-info"></i> CSV Format
-                                Guide</h5>
+                            <h5 class="fw-bold m-0 text-dark"><i class="fas fa-info-circle me-2 text-info"></i> CSV
+                                Format Guide</h5>
                         </div>
                         <div class="card-body p-4" id="guide-container">
-                            <p class="text-muted">Select a category on the left to view the required columns.</p>
+                            <p class="text-muted">Select a category on the left to view the required CSV columns.</p>
+                            <div class="alert alert-warning border-0 small">
+                                <strong>Tip:</strong> Follow the Import Order (Staff -> Classes -> Subjects -> Students)
+                                to ensure all data links correctly.
+                            </div>
                         </div>
                     </div>
                 </div>
+
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    // Dynamic Guide Content
     const guides = {
         users: `
-        <h6 class="fw-bold text-primary">Staff / Users (7 Cols)</h6>
-        <div class="code-box">FullName, Username, Password, Role, StaffID, IC_No, Phone</div>
+        <h6 class="fw-bold text-primary">Staff / Users CSV Columns (7 cols)</h6>
+        <p class="small text-muted">Use this to create admin, teachers, and staff accounts.</p>
+        <div class="code-box">
+FullName, Username, Password, Role, StaffID, IC_No, Phone
+        </div>
+        <p class="small mt-2"><strong>Role Options:</strong> admin, class_teacher, subject_teacher</p>
     `,
         classes: `
-        <h6 class="fw-bold text-primary">Classes (3 Cols)</h6>
-        <div class="code-box">ClassName, Year, TeacherStaffID</div>
+        <h6 class="fw-bold text-primary">Classes CSV Columns (3 cols)</h6>
+        <p class="small text-muted">Links to teachers using their Staff ID.</p>
+        <div class="code-box">
+ClassName, Year, Teacher_Staff_ID
+        </div>
+        <p class="small mt-2">Example: 5 Amanah, 2025, T-001</p>
     `,
         subjects: `
-        <h6 class="fw-bold text-primary">Subjects (4 Cols)</h6>
-        <div class="code-box">SubjectName, SubjectCode, ClassName, TeacherStaffID</div>
+        <h6 class="fw-bold text-primary">Subjects CSV Columns (4 cols)</h6>
+        <p class="small text-muted">Links to Class Name and Teacher Staff ID.</p>
+        <div class="code-box">
+SubjectName, SubjectCode, ClassName, Teacher_Staff_ID
+        </div>
+        <p class="small mt-2">Example: Math, MTH-5A, 5 Amanah, T-001</p>
     `,
         students: `
-        <h6 class="fw-bold text-primary">Students Full Profile (40 Cols)</h6>
-        <p class="small text-muted mb-2">Ensure your CSV matches this exact order:</p>
+        <h6 class="fw-bold text-primary">Students Full Profile (40 cols)</h6>
+        <p class="small text-muted">Contains Personal, Family, and Co-Q details.</p>
         <div class="code-box">
-[0]RegNo, [1]Name, [2]IC, [3]Gender, [4]Class, [5]DOB, [6]BirthPlace, [7]Race, [8]Rel, [9]Nation, [10]Phone, [11]Addr, [12]Enroll, [13]PrevSch, [14]BirthCert, [15]FName, [16]FIC, [17]FPhone, [18]FJob, [19]FSal, [20]MName, [21]MIC, [22]MPhone, [23]MJob, [24]MSal, [25]GName, [26]GIC, [27]GPhone, [28]GJob, [29]GSal, [30]Marital, [31]Orphan, [32]Baitul, [33]House, [34]Uniform, [35]UniPos, [36]Club, [37]ClubPos, [38]Sport, [39]SportPos
+[0]RegNo, [1]Name, [2]IC, [3]Gender, [4]Class_Name, [5]DOB, [6]BirthPlace, [7]Race, [8]Religion, [9]Nationality, [10]Phone, [11]Address, [12]EnrollDate, [13]PrevSchool, [14]BirthCert, [15]FatherName, [16]FatherIC, [17]FatherPhone, [18]FatherJob, [19]FatherSalary, [20]MotherName, [21]MotherIC, [22]MotherPhone, [23]MotherJob, [24]MotherSalary, [25]GuardName, [26]GuardIC, [27]GuardPhone, [28]GuardJob, [29]GuardSalary, [30]MaritalStatus, [31]IsOrphan, [32]IsBaitulmal, [33]SportsHouse, [34]Uniform, [35]UniPos, [36]Club, [37]ClubPos, [38]Sport, [39]SportPos
         </div>
+        <p class="small mt-2"><strong>Dates:</strong> Use YYYY-MM-DD format (e.g., 20/01/2020)</p>
     `
     };
 
     function updateGuide(val) {
-        const box = document.getElementById('guide-container');
-        box.innerHTML = guides[val] || '<p class="text-muted">Select a category.</p>';
+        const container = document.getElementById('guide-container');
+        if (guides[val]) {
+            container.innerHTML = guides[val];
+        } else {
+            container.innerHTML = '<p class="text-muted">Select a category on the left to view the required CSV columns.</p>';
+        }
     }
 </script>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
