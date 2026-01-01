@@ -16,19 +16,25 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] != 'admin') {
 if (isset($_POST['export_csv'])) {
     $cid = $_POST['class_id'];
     $sid = $_POST['subject_id'];
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // This is actually exam_id now
 
-    // Fetch Data
+    // Fetch Exam Name for filename
+    $ename = "Exam";
+    $eq = $conn->query("SELECT exam_name FROM exam_types WHERE exam_id = '$etype'");
+    if ($eq->num_rows > 0)
+        $ename = str_replace(' ', '', $eq->fetch_assoc()['exam_name']);
+
+    // Fetch Data (Updated join to use exam_id)
     $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained, sm.grade 
             FROM students st 
             JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-            LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$etype'
+            LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_id = '$etype'
             WHERE sse.subject_id = $sid AND sse.class_id = $cid
             ORDER BY st.student_name ASC";
     $rows = $conn->query($sql);
 
     // Set Headers
-    $filename = "Marks_Class" . $cid . "_Sub" . $sid . "_" . date('Ymd') . ".csv";
+    $filename = "Marks_Class" . $cid . "_Sub" . $sid . "_" . $ename . ".csv";
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
 
@@ -53,7 +59,7 @@ $msg_type = "";
 if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     $cid = $_POST['class_id'];
     $sid = $_POST['subject_id'];
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // exam_id
     $filename = $_FILES['csv_file']['tmp_name'];
 
     if ($_FILES['csv_file']['size'] > 0) {
@@ -62,15 +68,13 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
         fgetcsv($file); // Skip header
 
         while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
-            // CSV: [0]RegNo, [1]Name, [2]Mark
             $reg_no = $conn->real_escape_string(trim($data[0]));
 
-            // Validate Mark
             if (!isset($data[2]) || $data[2] === "")
                 continue;
             $mark_val = floatval($data[2]);
 
-            // Calculate Grade (Standard Scale)
+            // Simple Grade Logic (Can be replaced with DB logic if needed)
             $g = 'F';
             if ($mark_val >= 80)
                 $g = 'A';
@@ -90,15 +94,15 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
             if ($find_stu->num_rows > 0) {
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
 
-                // Update or Insert Mark
-                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+                // Update/Insert using exam_id
+                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_id = '$etype'");
                 if ($chk->num_rows > 0) {
-                    $upd = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-                    $upd->bind_param("dsis", $mark_val, $g, $eid, $etype);
+                    $upd = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_id=?");
+                    $upd->bind_param("dsii", $mark_val, $g, $eid, $etype);
                     $upd->execute();
                 } else {
-                    $ins = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-                    $ins->bind_param("isds", $eid, $etype, $mark_val, $g);
+                    $ins = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_id, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                    $ins->bind_param("iids", $eid, $etype, $mark_val, $g);
                     $ins->execute();
                 }
                 $count++;
@@ -117,7 +121,7 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 // 4. MANUAL SAVE LOGIC
 // ==========================================
 if (isset($_POST['save_changes'])) {
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // exam_id
     $count = 0;
 
     if (isset($_POST['marks'])) {
@@ -126,16 +130,15 @@ if (isset($_POST['save_changes'])) {
                 continue;
 
             $val = floatval($val);
-            // Grade Logic
             $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
 
-            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_id = '$etype'");
             if ($chk->num_rows > 0) {
-                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-                $stmt->bind_param("dsis", $val, $g, $eid, $etype);
+                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_id=?");
+                $stmt->bind_param("dsii", $val, $g, $eid, $etype);
             } else {
-                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-                $stmt->bind_param("isds", $eid, $etype, $val, $g);
+                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_id, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                $stmt->bind_param("iids", $eid, $etype, $val, $g);
             }
             $stmt->execute();
             $count++;
@@ -149,14 +152,21 @@ if (isset($_POST['save_changes'])) {
 // 5. FETCH DATA FOR VIEW
 // ==========================================
 $classes = $conn->query("SELECT * FROM classes ORDER BY class_name");
+$exam_types = $conn->query("SELECT * FROM exam_types WHERE status='active' ORDER BY created_at DESC");
 
 $sel_class = isset($_GET['class_id']) ? $_GET['class_id'] : '';
 $sel_subject = isset($_GET['subject_id']) ? $_GET['subject_id'] : '';
-$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
+$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : '';
+
+// Auto-select latest exam if not set
+if (!$sel_exam && $exam_types->num_rows > 0) {
+    $first_exam = $exam_types->fetch_assoc();
+    $sel_exam = $first_exam['exam_id'];
+    $exam_types->data_seek(0); // Reset pointer
+}
 
 $subjects = [];
 if ($sel_class) {
-    // Fetch subjects linked to this class
     $sub_q = $conn->query("SELECT * FROM subjects WHERE class_id = $sel_class ORDER BY subject_name");
     while ($s = $sub_q->fetch_assoc())
         $subjects[] = $s;
@@ -165,11 +175,11 @@ if ($sel_class) {
 $students = null;
 $stats = ['avg' => 0, 'pass' => 0, 'fail' => 0, 'max' => 0, 'grade_counts' => ['A' => 0, 'B' => 0, 'C' => 0, 'F' => 0]];
 
-if ($sel_class && $sel_subject) {
+if ($sel_class && $sel_subject && $sel_exam) {
     $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_id, sm.mark_obtained, sm.grade
             FROM students st
             JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-            LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$sel_exam'
+            LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_id = '$sel_exam'
             WHERE sse.subject_id = $sel_subject AND sse.class_id = $sel_class
             ORDER BY st.student_name ASC";
     $students = $conn->query($sql);
@@ -550,8 +560,18 @@ if ($sel_class && $sel_subject) {
                 <div class="input-group">
                     <label>3. Exam Term</label>
                     <select name="exam_type" class="form-select" onchange="this.form.submit()">
-                        <option value="Midterm" <?php echo ($sel_exam == 'Midterm') ? 'selected' : ''; ?>>Midterm</option>
-                        <option value="Final" <?php echo ($sel_exam == 'Final') ? 'selected' : ''; ?>>Final</option>
+                        <?php
+                        if ($exam_types->num_rows > 0) {
+                            $exam_types->data_seek(0);
+                            while ($et = $exam_types->fetch_assoc()): ?>
+                                <option value="<?php echo $et['exam_id']; ?>" <?php echo ($sel_exam == $et['exam_id']) ? 'selected' : ''; ?>>
+                                    <?php echo $et['exam_name']; ?>
+                                </option>
+                            <?php endwhile;
+                        } else {
+                            echo "<option value=''>No Exams Created</option>";
+                        }
+                        ?>
                     </select>
                 </div>
             </form>
