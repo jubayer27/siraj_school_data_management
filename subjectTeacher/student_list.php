@@ -113,7 +113,7 @@ $students = $conn->query($sql);
                                         <?php endif; ?>
                                     </td>
                                     <td style="text-align:right;">
-                                        <a href="../classTeacher/view_student_full.php?student_id=<?php echo $row['student_id']; ?>"
+                                        <a href="view_profile.php?student_id=<?php echo $row['student_id']; ?>"
                                             class="btn btn-sm btn-primary" title="View Full Profile">
                                             <i class="fas fa-eye"></i> View
                                         </a>

@@ -15,7 +15,29 @@ if (!isset($_GET['class_id'])) {
 }
 $cid = intval($_GET['class_id']);
 
-// 2. FETCH CLASS DETAILS
+// 2. HANDLE SUBJECT REMOVAL
+if (isset($_POST['remove_subject'])) {
+    $sid = intval($_POST['subject_id']);
+    // Check if this subject really belongs to this class before deleting
+    $chk = $conn->query("SELECT subject_name FROM subjects WHERE subject_id = $sid AND class_id = $cid");
+    if ($chk->num_rows > 0) {
+        // Option A: Delete the subject entirely (if it's a clone specific to this class)
+        $del = $conn->query("DELETE FROM subjects WHERE subject_id = $sid");
+
+        // Option B: Just unassign it (set class_id = NULL) - Use this if subjects are shared
+        // $del = $conn->query("UPDATE subjects SET class_id = NULL WHERE subject_id = $sid");
+
+        if ($del) {
+            $msg = "Subject removed successfully.";
+            $msg_type = "success";
+        } else {
+            $msg = "Error removing subject.";
+            $msg_type = "danger";
+        }
+    }
+}
+
+// 3. FETCH CLASS DETAILS
 $c_query = $conn->query("SELECT c.*, u.full_name as teacher_name, u.phone, u.avatar 
                          FROM classes c 
                          LEFT JOIN users u ON c.class_teacher_id = u.user_id 
@@ -25,22 +47,22 @@ $class = $c_query->fetch_assoc();
 if (!$class)
     die("Class not found.");
 
-// 3. FETCH STATISTICS
+// 4. FETCH STATISTICS
 $total_stu = $conn->query("SELECT count(*) as c FROM students WHERE class_id = $cid")->fetch_assoc()['c'];
 $male_stu = $conn->query("SELECT count(*) as c FROM students WHERE class_id = $cid AND gender = 'Male'")->fetch_assoc()['c'];
 $female_stu = $conn->query("SELECT count(*) as c FROM students WHERE class_id = $cid AND gender = 'Female'")->fetch_assoc()['c'];
 
-// 4. FETCH SUBJECTS & TEACHERS (FIXED for Many-to-Many)
-// We concat ID and Name like "12:John Doe" so we can parse it later for links
+// 5. FETCH SUBJECTS & TEACHERS
 $subjects = $conn->query("SELECT s.*, 
                           GROUP_CONCAT(CONCAT(u.user_id, ':', u.full_name) SEPARATOR '||') as teacher_data
                           FROM subjects s 
                           LEFT JOIN subject_teachers st ON s.subject_id = st.subject_id
                           LEFT JOIN users u ON st.teacher_id = u.user_id 
                           WHERE s.class_id = $cid
-                          GROUP BY s.subject_id");
+                          GROUP BY s.subject_id
+                          ORDER BY s.subject_name");
 
-// 5. FETCH STUDENTS LIST
+// 6. FETCH STUDENTS LIST
 $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY student_name ASC");
 ?>
 
@@ -52,7 +74,6 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
         overflow-x: hidden;
     }
 
-    /* Layout Fix */
     .main-content {
         position: absolute;
         top: 0;
@@ -60,7 +81,7 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
         width: calc(100% - 260px) !important;
         margin-left: 260px !important;
         min-height: 100vh;
-        padding: 0 !important;
+        padding: 30px !important;
         display: block !important;
     }
 
@@ -68,7 +89,6 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
         padding: 30px !important;
     }
 
-    /* Custom Cards */
     .view-card {
         border: none;
         border-radius: 12px;
@@ -85,7 +105,6 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
         align-items: center;
     }
 
-    /* Teacher Avatar */
     .avatar-md {
         width: 60px;
         height: 60px;
@@ -95,16 +114,6 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     }
 
-    .avatar-sm {
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        object-fit: cover;
-        border: 1px solid #eee;
-        margin-right: 5px;
-    }
-
-    /* Stat Cards */
     .mini-stat {
         background: white;
         border-radius: 12px;
@@ -144,20 +153,23 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
                 <div>
                     <h2 class="fw-bold text-dark mb-0">Class Profile</h2>
                     <p class="text-secondary mb-0"><strong><?php echo $class['class_name']; ?></strong> | Year:
-                        <?php echo $class['year']; ?>
-                    </p>
+                        <?php echo $class['year']; ?></p>
                 </div>
                 <a href="manage_classes.php" class="btn btn-light shadow-sm border">
                     <i class="fas fa-arrow-left me-2"></i> Back to Classes
                 </a>
             </div>
 
+            <?php if (isset($msg)): ?>
+                <div class="alert alert-<?php echo $msg_type; ?> mb-4"><?php echo $msg; ?></div>
+            <?php endif; ?>
+
             <div class="row g-4 mb-4">
                 <div class="col-lg-6">
                     <div class="card view-card h-100 p-3 border-start border-4 border-warning">
                         <div class="d-flex align-items-center">
                             <div class="me-3">
-                                <?php $t_img = $class['avatar'] ? "../uploads/" . $class['avatar'] : "https://ui-avatars.com/api/?name=" . $class['teacher_name']; ?>
+                                <?php $t_img = $class['avatar'] ? "../uploads/" . $class['avatar'] : "https://ui-avatars.com/api/?name=" . urlencode($class['teacher_name']); ?>
                                 <img src="<?php echo $t_img; ?>" class="avatar-md">
                             </div>
                             <div>
@@ -247,35 +259,48 @@ $students = $conn->query("SELECT * FROM students WHERE class_id = $cid ORDER BY 
                         <div class="card-header-custom">
                             <h5 class="fw-bold m-0 text-dark"><i class="fas fa-book text-warning me-2"></i> Curriculum
                             </h5>
+                            <a href="manage_assignments.php" class="btn btn-sm btn-outline-warning text-dark"><i
+                                    class="fas fa-plus"></i> Add</a>
                         </div>
                         <div class="card-body p-0">
                             <ul class="list-group list-group-flush">
                                 <?php if ($subjects->num_rows > 0): ?>
                                     <?php while ($sub = $subjects->fetch_assoc()): ?>
-                                        <li class="list-group-item p-3 d-flex justify-content-between align-items-center">
+                                        <li class="list-group-item p-3 d-flex justify-content-between align-items-start">
                                             <div>
                                                 <div class="fw-bold text-dark"><?php echo $sub['subject_name']; ?></div>
                                                 <small
                                                     class="text-muted font-monospace"><?php echo $sub['subject_code']; ?></small>
+
+                                                <div class="mt-2">
+                                                    <?php if ($sub['teacher_data']): ?>
+                                                        <?php
+                                                        $t_list = explode('||', $sub['teacher_data']);
+                                                        foreach ($t_list as $t_str):
+                                                            list($tid, $tname) = explode(':', $t_str);
+                                                            ?>
+                                                            <a href="view_user.php?user_id=<?php echo $tid; ?>"
+                                                                class="badge bg-light text-primary border border-primary-subtle text-decoration-none mb-1">
+                                                                <i class="fas fa-user me-1"></i> <?php echo $tname; ?>
+                                                            </a>
+                                                        <?php endforeach; ?>
+                                                    <?php else: ?>
+                                                        <span
+                                                            class="badge bg-danger-subtle text-danger border border-danger-subtle">No
+                                                            Teacher</span>
+                                                    <?php endif; ?>
+                                                </div>
                                             </div>
-                                            <div class="text-end" style="max-width: 50%;">
-                                                <?php if ($sub['teacher_data']): ?>
-                                                    <?php
-                                                    // Parse the GROUP_CONCAT string: "ID:Name||ID:Name"
-                                                    $t_list = explode('||', $sub['teacher_data']);
-                                                    foreach ($t_list as $t_str):
-                                                        list($tid, $tname) = explode(':', $t_str);
-                                                        ?>
-                                                        <a href="view_user.php?user_id=<?php echo $tid; ?>"
-                                                            class="badge bg-light text-primary border border-primary-subtle text-decoration-none d-block mb-1 text-truncate">
-                                                            <i class="fas fa-user me-1"></i> <?php echo $tname; ?>
-                                                        </a>
-                                                    <?php endforeach; ?>
-                                                <?php else: ?>
-                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">No
-                                                        Teacher</span>
-                                                <?php endif; ?>
-                                            </div>
+
+                                            <form method="POST"
+                                                onsubmit="return confirm('Are you sure you want to remove this subject from this class?');">
+                                                <input type="hidden" name="subject_id"
+                                                    value="<?php echo $sub['subject_id']; ?>">
+                                                <button type="submit" name="remove_subject"
+                                                    class="btn btn-sm btn-light text-danger border-0" title="Remove Subject">
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </button>
+                                            </form>
                                         </li>
                                     <?php endwhile; ?>
                                 <?php else: ?>

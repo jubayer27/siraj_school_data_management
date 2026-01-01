@@ -12,19 +12,32 @@ $teacher_id = $_SESSION['user_id'];
 $alert_msg = "";
 $alert_type = "";
 
-// Helper to check subject ownership (Updated for Many-to-Many)
+// Helper to check subject ownership
 function is_authorized($conn, $sid, $tid)
 {
+    // Admins have access to everything
+    if ($_SESSION['role'] == 'admin')
+        return true;
+
     $q = $conn->query("SELECT 1 FROM subject_teachers WHERE subject_id = $sid AND teacher_id = $tid");
     return ($q->num_rows > 0);
 }
 
-// ==========================================
+// ---------------------------------------------------------
+// 0. FETCH ACTIVE EXAMS (Dynamic)
+// ---------------------------------------------------------
+$exam_query = $conn->query("SELECT * FROM exam_types WHERE status = 'active' ORDER BY created_at DESC");
+$active_exams = [];
+while ($row = $exam_query->fetch_assoc()) {
+    $active_exams[] = $row;
+}
+
+// ---------------------------------------------------------
 // 2. EXPORT LOGIC
-// ==========================================
+// ---------------------------------------------------------
 if (isset($_POST['export_csv'])) {
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // Exam Name
 
     if (is_authorized($conn, $sid, $teacher_id)) {
         $sub_info = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid")->fetch_assoc();
@@ -37,7 +50,7 @@ if (isset($_POST['export_csv'])) {
                 ORDER BY st.student_name ASC";
         $rows = $conn->query($sql);
 
-        $filename = $sub_info['subject_code'] . "_" . $etype . "_Marks.csv";
+        $filename = $sub_info['subject_code'] . "_" . str_replace(' ', '', $etype) . "_Marks.csv";
         header('Content-Type: text/csv');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
 
@@ -54,9 +67,9 @@ if (isset($_POST['export_csv'])) {
 
 include 'includes/header.php';
 
-// ==========================================
+// ---------------------------------------------------------
 // 3. IMPORT LOGIC
-// ==========================================
+// ---------------------------------------------------------
 if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
@@ -105,9 +118,9 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     }
 }
 
-// ==========================================
+// ---------------------------------------------------------
 // 4. MANUAL SAVE LOGIC
-// ==========================================
+// ---------------------------------------------------------
 if (isset($_POST['save_marks'])) {
     $sid = intval($_POST['subject_id']);
     $etype = $_POST['exam_type'];
@@ -131,28 +144,46 @@ if (isset($_POST['save_marks'])) {
             $stmt->execute();
             $count++;
         }
-        $alert_msg = "Successfully saved $count marks for $etype.";
+        $alert_msg = "Successfully saved $count marks for " . htmlspecialchars($etype) . ".";
         $alert_type = "success";
     }
 }
 
-// 5. FETCH DATA
-// Updated for Many-to-Many
-$sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
-              FROM subjects s 
-              JOIN subject_teachers st ON s.subject_id = st.subject_id
-              JOIN classes c ON s.class_id = c.class_id 
-              WHERE st.teacher_id = $teacher_id 
-              ORDER BY c.class_name, s.subject_name";
+// ---------------------------------------------------------
+// 5. FETCH DATA FOR VIEW
+// ---------------------------------------------------------
+
+// Fetch Teacher's Subjects
+if ($_SESSION['role'] == 'admin') {
+    // Admin sees all subjects
+    $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
+                  FROM subjects s 
+                  JOIN classes c ON s.class_id = c.class_id 
+                  ORDER BY c.class_name, s.subject_name";
+} else {
+    // Teacher sees assigned subjects
+    $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
+                  FROM subjects s 
+                  JOIN subject_teachers st ON s.subject_id = st.subject_id
+                  JOIN classes c ON s.class_id = c.class_id 
+                  WHERE st.teacher_id = $teacher_id 
+                  ORDER BY c.class_name, s.subject_name";
+}
 $my_subjects = $conn->query($sub_query);
 
+// Determine Selected Subject & Exam
 $sel_sub = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : '';
-$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
+$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : '';
+
+// Default to first active exam if none selected
+if (empty($sel_exam) && !empty($active_exams)) {
+    $sel_exam = $active_exams[0]['exam_name'];
+}
 
 $students = null;
 $stats = ['total' => 0, 'graded' => 0, 'avg' => 0];
 
-if ($sel_sub) {
+if ($sel_sub && $sel_exam) {
     if (is_authorized($conn, $sel_sub, $teacher_id)) {
         $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_obtained, sm.grade
                 FROM students st
@@ -162,7 +193,7 @@ if ($sel_sub) {
                 ORDER BY st.student_name ASC";
         $students = $conn->query($sql);
 
-        if ($students->num_rows > 0) {
+        if ($students && $students->num_rows > 0) {
             $stats['total'] = $students->num_rows;
             $total_score = 0;
             while ($row = $students->fetch_assoc()) {
@@ -199,7 +230,7 @@ if ($sel_sub) {
                     </button>
                     <form method="POST" style="margin:0;">
                         <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                        <input type="hidden" name="exam_type" value="<?php echo $sel_exam; ?>">
+                        <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
                         <button type="submit" name="export_csv" class="btn btn-primary" style="background:#27ae60;">
                             <i class="fas fa-file-download"></i> Export CSV
                         </button>
@@ -238,14 +269,15 @@ if ($sel_sub) {
                     <div class="select-wrapper">
                         <i class="fas fa-calendar-alt"></i>
                         <select name="exam_type" onchange="this.form.submit()">
-                            <option value="Midterm" <?php echo ($sel_exam == 'Midterm') ? 'selected' : ''; ?>>Midterm Exam
-                            </option>
-                            <option value="Final" <?php echo ($sel_exam == 'Final') ? 'selected' : ''; ?>>Final Exam
-                            </option>
-                            <option value="Quiz 1" <?php echo ($sel_exam == 'Quiz 1') ? 'selected' : ''; ?>>Quiz 1
-                            </option>
-                            <option value="Quiz 2" <?php echo ($sel_exam == 'Quiz 2') ? 'selected' : ''; ?>>Quiz 2
-                            </option>
+                            <?php if (empty($active_exams)): ?>
+                                <option value="">No Active Exams</option>
+                            <?php else: ?>
+                                <?php foreach ($active_exams as $ex): ?>
+                                    <option value="<?php echo htmlspecialchars($ex['exam_name']); ?>" <?php echo ($sel_exam == $ex['exam_name']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($ex['exam_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </select>
                         <i class="fas fa-chevron-down arrow"></i>
                     </div>
@@ -263,7 +295,7 @@ if ($sel_sub) {
             </p>
             <form method="POST" enctype="multipart/form-data" class="import-form">
                 <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                <input type="hidden" name="exam_type" value="<?php echo $sel_exam; ?>">
+                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
                 <input type="file" name="csv_file" accept=".csv" required>
                 <button type="submit" name="import_marks" class="btn btn-primary">Process Upload</button>
             </form>
@@ -288,7 +320,7 @@ if ($sel_sub) {
 
             <form method="POST">
                 <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                <input type="hidden" name="exam_type" value="<?php echo $sel_exam; ?>">
+                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
 
                 <div class="card table-card">
                     <div class="card-header-row">
@@ -361,7 +393,7 @@ if ($sel_sub) {
 </div>
 
 <style>
-    /* --- NEW FILTER BAR DESIGN --- */
+    /* Styling remains the same as previously provided */
     .filter-card {
         padding: 0;
         border: 1px solid #e0e0e0;

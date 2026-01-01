@@ -25,21 +25,26 @@ function is_authorized($conn, $sid, $tid) {
 // ==========================================
 if(isset($_POST['export_csv'])){
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // This is exam_id now
     
     // Verify ownership
     if(is_authorized($conn, $sid, $teacher_id)){
         $sub_info = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid")->fetch_assoc();
         
+        // Fetch Exam Name for filename
+        $exam_name_q = $conn->query("SELECT exam_name FROM exam_types WHERE exam_id = '$etype'");
+        $exam_name = ($exam_name_q->num_rows > 0) ? $exam_name_q->fetch_assoc()['exam_name'] : 'Exam';
+        $safe_exam_name = preg_replace('/[^a-zA-Z0-9]/', '', $exam_name);
+
         $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
                 FROM students st 
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$etype'
+                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_id = '$etype'
                 WHERE sse.subject_id = $sid
                 ORDER BY st.student_name ASC";
         $rows = $conn->query($sql);
         
-        $filename = $sub_info['subject_code'] . "_" . $etype . "_Marks.csv";
+        $filename = $sub_info['subject_code'] . "_" . $safe_exam_name . "_Marks.csv";
         header('Content-Type: text/csv');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
         
@@ -59,7 +64,7 @@ if(isset($_POST['export_csv'])){
 // ==========================================
 if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // exam_id
     $filename = $_FILES['csv_file']['tmp_name'];
     
     if(is_authorized($conn, $sid, $teacher_id) && $_FILES['csv_file']['size'] > 0){
@@ -83,13 +88,13 @@ if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
             if($find_stu->num_rows > 0){
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
                 
-                // Update or Insert
-                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+                // Update or Insert using exam_id
+                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_id = '$etype'");
                 if($chk->num_rows > 0){
-                    $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                    $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_id=?");
                     $stmt->bind_param("dsis", $mark_val, $g, $eid, $etype);
                 } else {
-                    $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                    $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_id, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
                     $stmt->bind_param("isds", $eid, $etype, $mark_val, $g);
                 }
                 $stmt->execute();
@@ -110,7 +115,7 @@ if(isset($_POST['import_marks']) && isset($_FILES['csv_file'])){
 // ==========================================
 if (isset($_POST['save_marks'])) {
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
+    $etype = $_POST['exam_type']; // exam_id
     $count = 0;
     
     if(isset($_POST['marks'])){
@@ -119,12 +124,12 @@ if (isset($_POST['save_marks'])) {
             $val = floatval($val);
             $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
 
-            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_id = '$etype'");
             if ($chk->num_rows > 0) {
-                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_id=?");
                 $stmt->bind_param("dsis", $val, $g, $eid, $etype);
             } else {
-                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
+                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_id, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
                 $stmt->bind_param("isds", $eid, $etype, $val, $g);
             }
             $stmt->execute();
@@ -145,20 +150,31 @@ $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name, c.class_id
               ORDER BY c.class_name, s.subject_name";
 $my_subjects = $conn->query($sub_query);
 
-// 6. LOAD SELECTED DATA
+// 6. FETCH EXAM TYPES (New Logic)
+$exam_types_query = "SELECT * FROM exam_types WHERE status = 'active' ORDER BY created_at DESC";
+$exam_types = $conn->query($exam_types_query);
+
+// 7. LOAD SELECTED DATA
 $sel_sub = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : '';
-$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
+$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : '';
+
+// Auto-select first exam if none selected and exams exist
+if (!$sel_exam && $exam_types->num_rows > 0) {
+    $first_exam = $exam_types->fetch_assoc();
+    $sel_exam = $first_exam['exam_id'];
+    $exam_types->data_seek(0); // Reset pointer
+}
 
 $students = null;
 $stats = ['total'=>0, 'graded'=>0, 'avg'=>0];
 
-if ($sel_sub) {
+if ($sel_sub && $sel_exam) {
     // Security Check
     if(is_authorized($conn, $sel_sub, $teacher_id)){
         $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_obtained, sm.grade
                 FROM students st
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$sel_exam'
+                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_id = '$sel_exam'
                 WHERE sse.subject_id = $sel_sub
                 ORDER BY st.student_name ASC";
         $students = $conn->query($sql);
@@ -263,9 +279,18 @@ if ($sel_sub) {
                     <div class="col-md-6">
                         <label class="fw-bold text-muted small mb-1">EXAM TYPE</label>
                         <select name="exam_type" class="form-select form-select-lg" onchange="this.form.submit()">
-                            <option value="Midterm" <?php echo ($sel_exam=='Midterm')?'selected':''; ?>>Midterm Exam</option>
-                            <option value="Final" <?php echo ($sel_exam=='Final')?'selected':''; ?>>Final Exam</option>
-                            <option value="Quiz 1" <?php echo ($sel_exam=='Quiz 1')?'selected':''; ?>>Quiz 1</option>
+                            <?php 
+                            if ($exam_types->num_rows > 0) {
+                                $exam_types->data_seek(0);
+                                while ($et = $exam_types->fetch_assoc()): 
+                            ?>
+                                <option value="<?php echo $et['exam_id']; ?>" <?php echo ($sel_exam == $et['exam_id']) ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($et['exam_name']); ?>
+                                </option>
+                            <?php endwhile; 
+                            } else {
+                                echo "<option value=''>No Exams Found</option>";
+                            } ?>
                         </select>
                     </div>
                 </form>
@@ -363,7 +388,7 @@ if ($sel_sub) {
                     <div class="card-body">
                         <i class="fas fa-book-reader fa-3x text-muted mb-3 opacity-25"></i>
                         <h4 class="fw-bold text-secondary">No Subject Selected</h4>
-                        <p class="text-muted">Please select a Class & Subject from the menu above to begin grading.</p>
+                        <p class="text-muted">Please select a Class, Subject, and Exam Type from the menu above to begin grading.</p>
                     </div>
                 </div>
             <?php endif; ?>
