@@ -1,26 +1,26 @@
 <?php
 session_start();
 include '../config/db.php';
+include 'includes/header.php';
 
-// 1. SECURITY: Ensure User is Logged In
+// 1. AUTHENTICATION
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../index.php");
     exit();
 }
 
 $user_id = $_SESSION['user_id'];
-$role = $_SESSION['role']; // 'class_teacher' or 'subject_teacher'
+$role = $_SESSION['role'];
 $msg = "";
 $msg_type = "";
 
-// 2. HANDLE PROFILE UPDATE
+// 2. LOGIC: UPDATE PROFILE
 if (isset($_POST['update_profile'])) {
     $fullname = $conn->real_escape_string($_POST['full_name']);
     $phone = $conn->real_escape_string($_POST['phone']);
     $ic = $conn->real_escape_string($_POST['ic_no']);
     $username = $conn->real_escape_string($_POST['username']);
 
-    // Avatar Upload Logic
     $avatar_sql = "";
     if (!empty($_FILES['avatar']['name'])) {
         $target_dir = "../uploads/";
@@ -40,16 +40,16 @@ if (isset($_POST['update_profile'])) {
 
     $sql = "UPDATE users SET full_name='$fullname', phone='$phone', ic_no='$ic', username='$username' $avatar_sql WHERE user_id='$user_id'";
     if ($conn->query($sql)) {
-        $msg = "Personal details updated successfully!";
+        $msg = "Profile updated successfully!";
         $msg_type = "success";
-        $_SESSION['full_name'] = $fullname; // Update session
+        $_SESSION['full_name'] = $fullname;
     } else {
-        $msg = "Error updating profile: " . $conn->error;
+        $msg = "Error updating database.";
         $msg_type = "danger";
     }
 }
 
-// 3. HANDLE PASSWORD CHANGE
+// 3. LOGIC: CHANGE PASSWORD
 if (isset($_POST['change_password'])) {
     $current = $_POST['current_password'];
     $new = $_POST['new_password'];
@@ -66,7 +66,7 @@ if (isset($_POST['change_password'])) {
                 $msg = "Password changed successfully!";
                 $msg_type = "success";
             } else {
-                $msg = "New password must be at least 6 characters.";
+                $msg = "Password must be at least 6 characters.";
                 $msg_type = "danger";
             }
         } else {
@@ -82,72 +82,64 @@ if (isset($_POST['change_password'])) {
 // 4. FETCH USER DATA
 $user = $conn->query("SELECT * FROM users WHERE user_id = '$user_id'")->fetch_assoc();
 
-// 5. FETCH DEDICATED ROLE INFO
-$role_info = "";
+// 5. FETCH ROLE SPECIFIC INFO
+$role_display = "Staff";
+$role_detail = "";
+
 if ($role == 'class_teacher') {
-    $c_q = $conn->query("SELECT class_name, year FROM classes WHERE class_teacher_id = '$user_id'");
+    $role_display = "Class Teacher";
+    $c_q = $conn->query("SELECT class_name FROM classes WHERE class_teacher_id = '$user_id'");
     if ($c_q->num_rows > 0) {
-        $c_data = $c_q->fetch_assoc();
-        $role_info = "Class Teacher of <strong>" . $c_data['class_name'] . " (" . $c_data['year'] . ")</strong>";
+        $role_detail = "Managed Class: <strong class='text-primary'>" . $c_q->fetch_assoc()['class_name'] . "</strong>";
     } else {
-        $role_info = "No class assigned yet.";
+        $role_detail = "No Class Assigned";
     }
 } elseif ($role == 'subject_teacher') {
-    $s_q = $conn->query("SELECT s.subject_name, c.class_name 
-                         FROM subject_teachers st 
-                         JOIN subjects s ON st.subject_id = s.subject_id 
-                         JOIN classes c ON s.class_id = c.class_id 
-                         WHERE st.teacher_id = '$user_id'");
-    $subjects_list = [];
-    while ($sub = $s_q->fetch_assoc()) {
-        $subjects_list[] = $sub['subject_name'] . " (" . $sub['class_name'] . ")";
-    }
-    if (!empty($subjects_list)) {
-        $role_info = "Teaches: " . implode(", ", $subjects_list);
-    } else {
-        $role_info = "No subjects assigned yet.";
-    }
+    $role_display = "Subject Teacher";
+    $s_q = $conn->query("SELECT count(*) as c FROM subject_teachers WHERE teacher_id = '$user_id'");
+    $count = $s_q->fetch_assoc()['c'];
+    $role_detail = "Teaching Load: <strong class='text-warning'>" . $count . " Subjects</strong>";
 }
 ?>
 
-<?php include 'includes/header.php'; ?>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
 <style>
     /* GLOBAL LAYOUT */
     body {
         background-color: #f4f6f9;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         overflow-x: hidden;
     }
 
     .main-content {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: calc(100% - 260px) !important;
-        margin-left: 260px !important;
+        margin-left: 260px;
+        padding: 30px;
         min-height: 100vh;
-        padding: 40px !important;
-        display: block !important;
+        width: calc(100% - 260px);
     }
 
     /* CARD STYLING */
-    .profile-card {
-        background: white;
+    .dashboard-card {
+        border: none;
         border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+        background: white;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+        height: 100%;
         overflow: hidden;
-        margin-bottom: 30px;
-        border: 1px solid #eef2f7;
     }
 
+    /* PROFILE SIDEBAR (Left Column) */
     .profile-header-bg {
         height: 120px;
-        background: linear-gradient(135deg, #FFD700, #ffb900);
+        background: linear-gradient(135deg, #FFD700, #FDB931);
+        position: relative;
     }
 
-    .profile-body {
-        padding: 0 30px 30px;
+    .profile-avatar-wrapper {
         position: relative;
+        margin-top: -60px;
         text-align: center;
     }
 
@@ -157,96 +149,110 @@ if ($role == 'class_teacher') {
         border-radius: 50%;
         border: 5px solid white;
         object-fit: cover;
-        margin-top: -60px;
-        background: #eee;
+        background: #fff;
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
     }
 
-    .role-badge {
-        background: #2c3e50;
-        color: #FFD700;
-        padding: 5px 15px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        display: inline-block;
-        margin-top: 10px;
+    .profile-meta {
+        text-align: center;
+        padding: 20px 25px 30px;
     }
 
-    /* TABS */
-    .nav-tabs .nav-link {
-        color: #555;
+    .info-list-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 0.9rem;
+    }
+
+    .info-list-item:last-child {
+        border-bottom: none;
+    }
+
+    .info-label {
+        color: #7f8c8d;
+        font-weight: 600;
+    }
+
+    .info-value {
+        color: #2c3e50;
+        font-weight: 700;
+    }
+
+    /* SETTINGS PANEL (Right Column) */
+    .nav-tabs {
+        border-bottom: 1px solid #eee;
+        padding: 0 20px;
+    }
+
+    .nav-link {
+        color: #7f8c8d;
         font-weight: 600;
         border: none;
-        border-bottom: 3px solid transparent;
-        padding: 15px 20px;
+        padding: 15px 25px;
+        transition: 0.3s;
     }
 
-    .nav-tabs .nav-link.active {
+    .nav-link.active {
         color: #2c3e50;
-        border-bottom-color: #FFD700;
         background: transparent;
+        border-bottom: 3px solid #FFD700;
     }
 
-    .nav-tabs .nav-link:hover {
-        color: #000;
+    .nav-link:hover {
+        color: #333;
     }
 
-    /* FORMS */
-    .form-label {
+    .form-section {
+        padding: 30px;
+    }
+
+    .form-group label {
         font-weight: 700;
-        font-size: 0.85rem;
         color: #555;
+        font-size: 0.8rem;
         text-transform: uppercase;
+        margin-bottom: 8px;
+        letter-spacing: 0.5px;
     }
 
     .form-control {
-        padding: 12px;
         border-radius: 8px;
-        border: 1px solid #eee;
-        background-color: #f9f9f9;
+        padding: 12px;
+        border: 1px solid #e0e0e0;
+        background-color: #fcfcfc;
     }
 
     .form-control:focus {
         background-color: #fff;
         border-color: #FFD700;
-        box-shadow: none;
+        box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1);
     }
 
-    .btn-gold {
-        background: #FFD700;
-        color: #000;
-        font-weight: bold;
-        border: none;
+    .btn-save {
+        background: #2c3e50;
+        color: white;
+        font-weight: 700;
         padding: 12px 30px;
         border-radius: 8px;
-        transition: 0.3s;
+        border: none;
+        transition: 0.2s;
     }
 
-    .btn-gold:hover {
-        background: #e6c200;
+    .btn-save:hover {
+        background: #1a252f;
         transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(255, 215, 0, 0.3);
+        box-shadow: 0 5px 15px rgba(44, 62, 80, 0.2);
     }
 
-    /* RESPONSIVE FIX */
+    /* RESPONSIVE */
     @media (max-width: 992px) {
         .main-content {
-            margin-left: 0 !important;
-            width: 100% !important;
-            padding: 20px !important;
-        }
-
-        .row {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .col-lg-4,
-        .col-lg-8 {
+            margin-left: 0;
             width: 100%;
+            padding: 20px;
         }
     }
 </style>
@@ -255,130 +261,163 @@ if ($role == 'class_teacher') {
     <?php include 'includes/sidebar.php'; ?>
 
     <div class="main-content">
+        <div class="container-fluid p-0">
 
-        <?php if ($msg): ?>
-            <div class="alert alert-<?php echo $msg_type; ?> shadow-sm rounded-3 border-0 d-flex align-items-center mb-4">
-                <i class="fas fa-info-circle me-2"></i> <?php echo $msg; ?>
-            </div>
-        <?php endif; ?>
-
-        <div class="row g-4">
-            <div class="col-lg-4">
-                <div class="profile-card">
-                    <div class="profile-header-bg"></div>
-                    <div class="profile-body">
-                        <?php $avatar = !empty($user['avatar']) ? "../uploads/" . $user['avatar'] : "https://ui-avatars.com/api/?name=" . $user['full_name'] . "&background=random"; ?>
-                        <img src="<?php echo $avatar; ?>" class="profile-avatar">
-
-                        <h4 class="fw-bold mt-3 text-dark mb-1"><?php echo $user['full_name']; ?></h4>
-                        <div class="text-muted small mb-2"><?php echo $user['teacher_id_no']; ?></div>
-
-                        <span class="role-badge"><?php echo str_replace('_', ' ', strtoupper($role)); ?></span>
-
-                        <div class="mt-4 p-3 bg-light rounded text-start">
-                            <h6 class="fw-bold text-secondary text-uppercase small mb-3">Dedicated Info</h6>
-                            <p class="mb-1 text-dark small"><i class="fas fa-briefcase me-2 text-warning"></i>
-                                <?php echo $role_info; ?></p>
-                            <p class="mb-0 text-dark small"><i class="fas fa-envelope me-2 text-warning"></i>
-                                <?php echo $user['username']; ?></p>
-                        </div>
-                    </div>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold text-dark m-0">My Profile</h2>
+                    <p class="text-muted m-0">Manage your account settings and personal information.</p>
                 </div>
             </div>
 
-            <div class="col-lg-8">
-                <div class="profile-card">
-                    <div class="card-header bg-white border-bottom p-0">
-                        <ul class="nav nav-tabs" id="myTab" role="tablist">
-                            <li class="nav-item">
-                                <button class="nav-link active" id="edit-tab" data-bs-toggle="tab"
-                                    data-bs-target="#edit" type="button">Edit Profile</button>
-                            </li>
-                            <li class="nav-item">
-                                <button class="nav-link" id="password-tab" data-bs-toggle="tab"
-                                    data-bs-target="#password" type="button">Change Password</button>
-                            </li>
-                        </ul>
-                    </div>
+            <?php if ($msg): ?>
+                <div
+                    class="alert alert-<?php echo $msg_type; ?> shadow-sm rounded-3 border-0 d-flex align-items-center mb-4">
+                    <i class="fas fa-info-circle me-2 fs-5"></i> <?php echo $msg; ?>
+                </div>
+            <?php endif; ?>
 
-                    <div class="card-body p-4">
-                        <div class="tab-content" id="myTabContent">
+            <div class="row g-4">
 
-                            <div class="tab-pane fade show active" id="edit">
-                                <form method="POST" enctype="multipart/form-data">
-                                    <div class="row g-3">
-                                        <div class="col-md-6">
-                                            <label class="form-label">Full Name</label>
-                                            <input type="text" name="full_name" class="form-control"
-                                                value="<?php echo $user['full_name']; ?>" required>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">Username</label>
-                                            <input type="text" name="username" class="form-control"
-                                                value="<?php echo $user['username']; ?>" required>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">Phone Number</label>
-                                            <input type="text" name="phone" class="form-control"
-                                                value="<?php echo $user['phone']; ?>">
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">IC Number</label>
-                                            <input type="text" name="ic_no" class="form-control"
-                                                value="<?php echo $user['ic_no']; ?>">
-                                        </div>
-                                        <div class="col-12">
-                                            <label class="form-label">Profile Picture</label>
-                                            <input type="file" name="avatar" class="form-control" accept="image/*">
-                                            <small class="text-muted">Allowed: JPG, PNG. Max size: 2MB</small>
-                                        </div>
-                                        <div class="col-12 text-end mt-4">
-                                            <button type="submit" name="update_profile" class="btn btn-gold">
-                                                <i class="fas fa-save me-2"></i> Save Changes
-                                            </button>
-                                        </div>
-                                    </div>
-                                </form>
+                <div class="col-lg-4">
+                    <div class="dashboard-card">
+                        <div class="profile-header-bg"></div>
+                        <div class="profile-avatar-wrapper">
+                            <?php $avatar = !empty($user['avatar']) ? "../uploads/" . $user['avatar'] : "https://ui-avatars.com/api/?name=" . $user['full_name'] . "&background=random&size=128"; ?>
+                            <img src="<?php echo $avatar; ?>" class="profile-avatar">
+                        </div>
+                        <div class="profile-meta">
+                            <h4 class="fw-bold text-dark mb-1"><?php echo $user['full_name']; ?></h4>
+                            <div class="badge bg-light text-dark border mb-3"><?php echo $role_display; ?></div>
+
+                            <div class="text-start mt-3">
+                                <div class="info-list-item">
+                                    <span class="info-label"><i class="fas fa-id-badge me-2 text-warning"></i>Teacher
+                                        ID</span>
+                                    <span class="info-value"><?php echo $user['teacher_id_no']; ?></span>
+                                </div>
+                                <div class="info-list-item">
+                                    <span class="info-label"><i
+                                            class="fas fa-user me-2 text-warning"></i>Username</span>
+                                    <span class="info-value"><?php echo $user['username']; ?></span>
+                                </div>
+                                <div class="info-list-item">
+                                    <span class="info-label"><i class="fas fa-phone me-2 text-warning"></i>Phone</span>
+                                    <span class="info-value"><?php echo $user['phone'] ? $user['phone'] : '-'; ?></span>
+                                </div>
+                                <div class="info-list-item bg-light p-2 rounded mt-2 border-0">
+                                    <span class="info-label text-dark">Status:</span>
+                                    <span class="info-value"><?php echo $role_detail; ?></span>
+                                </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
 
-                            <div class="tab-pane fade" id="password">
-                                <form method="POST">
-                                    <div class="row g-3">
-                                        <div class="col-12">
-                                            <div class="alert alert-warning border-0 small">
-                                                <i class="fas fa-lock me-2"></i> For security, please choose a strong
-                                                password.
+                <div class="col-lg-8">
+                    <div class="dashboard-card">
+                        <div class="card-header bg-white p-0">
+                            <ul class="nav nav-tabs" id="profileTabs" role="tablist">
+                                <li class="nav-item">
+                                    <button class="nav-link active" id="details-tab" data-bs-toggle="tab"
+                                        data-bs-target="#details" type="button">
+                                        <i class="fas fa-user-edit me-2"></i> Personal Details
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" id="security-tab" data-bs-toggle="tab"
+                                        data-bs-target="#security" type="button">
+                                        <i class="fas fa-lock me-2"></i> Security
+                                    </button>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <div class="tab-content" id="profileTabsContent">
+
+                            <div class="tab-pane fade show active" id="details" role="tabpanel">
+                                <div class="form-section">
+                                    <form method="POST" enctype="multipart/form-data">
+                                        <div class="row g-4">
+                                            <div class="col-md-6 form-group">
+                                                <label>Full Name</label>
+                                                <input type="text" name="full_name" class="form-control"
+                                                    value="<?php echo $user['full_name']; ?>" required>
+                                            </div>
+                                            <div class="col-md-6 form-group">
+                                                <label>Login Username</label>
+                                                <input type="text" name="username" class="form-control"
+                                                    value="<?php echo $user['username']; ?>" required>
+                                            </div>
+                                            <div class="col-md-6 form-group">
+                                                <label>Contact Number</label>
+                                                <input type="text" name="phone" class="form-control"
+                                                    value="<?php echo $user['phone']; ?>">
+                                            </div>
+                                            <div class="col-md-6 form-group">
+                                                <label>IC / ID Number</label>
+                                                <input type="text" name="ic_no" class="form-control"
+                                                    value="<?php echo $user['ic_no']; ?>">
+                                            </div>
+                                            <div class="col-12 form-group">
+                                                <label>Profile Picture</label>
+                                                <input type="file" name="avatar" class="form-control" accept="image/*">
+                                                <div class="form-text small"><i class="fas fa-info-circle me-1"></i> Max
+                                                    size 2MB. Formats: JPG, PNG.</div>
+                                            </div>
+                                            <div class="col-12 text-end mt-4">
+                                                <button type="submit" name="update_profile" class="btn btn-save">
+                                                    <i class="fas fa-check-circle me-2"></i> Save Changes
+                                                </button>
                                             </div>
                                         </div>
-                                        <div class="col-12">
-                                            <label class="form-label">Current Password</label>
-                                            <input type="password" name="current_password" class="form-control"
-                                                required>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">New Password</label>
-                                            <input type="password" name="new_password" class="form-control" required>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">Confirm New Password</label>
-                                            <input type="password" name="confirm_password" class="form-control"
-                                                required>
-                                        </div>
-                                        <div class="col-12 text-end mt-4">
-                                            <button type="submit" name="change_password" class="btn btn-gold">
-                                                <i class="fas fa-key me-2"></i> Update Password
-                                            </button>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <div class="tab-pane fade" id="security" role="tabpanel">
+                                <div class="form-section">
+                                    <div class="alert alert-warning border-0 d-flex align-items-center mb-4">
+                                        <i class="fas fa-shield-alt fa-2x me-3 opacity-50"></i>
+                                        <div class="small">
+                                            <strong>Password Requirements:</strong><br>
+                                            At least 6 characters long. Use a mix of letters and numbers for better
+                                            security.
                                         </div>
                                     </div>
-                                </form>
+                                    <form method="POST">
+                                        <div class="row g-4">
+                                            <div class="col-12 form-group">
+                                                <label>Current Password</label>
+                                                <input type="password" name="current_password" class="form-control"
+                                                    placeholder="Type current password to verify" required>
+                                            </div>
+                                            <div class="col-md-6 form-group">
+                                                <label>New Password</label>
+                                                <input type="password" name="new_password" class="form-control"
+                                                    required>
+                                            </div>
+                                            <div class="col-md-6 form-group">
+                                                <label>Confirm New Password</label>
+                                                <input type="password" name="confirm_password" class="form-control"
+                                                    required>
+                                            </div>
+                                            <div class="col-12 text-end mt-4">
+                                                <button type="submit" name="change_password" class="btn btn-save">
+                                                    <i class="fas fa-key me-2"></i> Update Password
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
 
                         </div>
                     </div>
                 </div>
+
             </div>
         </div>
-
     </div>
 </div>
 
