@@ -82,6 +82,11 @@ $current_page = basename($_SERVER['PHP_SELF']);
                 <i class="fas fa-pen-alt"></i> <span>Grade Book</span>
             </a>
         </li>
+        <li>
+            <a href="profile.php" class="<?php echo $current_page == 'profile.php' ? 'active' : ''; ?>">
+                <i class="fas fa-pen-alt"></i> <span>My Profile</span>
+            </a>
+        </li>
 
         <li class="menu-header">THEME PREFERENCE</li>
         <li style="padding: 10px 25px;">
