@@ -43,7 +43,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
         </li>
         <li>
             <a href="profile.php" class="<?php echo $current_page == 'profile.php' ? 'active' : ''; ?>">
-                <i class="fas fa-pen-alt"></i> <span>My Profile</span>
+                <i class="fa-regular fa-address-card"></i><span>My Profile</span>
             </a>
         </li>
 
