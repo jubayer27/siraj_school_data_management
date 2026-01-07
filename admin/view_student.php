@@ -8,7 +8,7 @@ include '../config/db.php';
 include 'includes/header.php';
 
 // 1. AUTHENTICATION
-if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
+if(!isset($_SESSION['role']) || ($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin')){
     header("Location: ../index.php"); exit(); 
 }
 
@@ -16,6 +16,22 @@ if(!isset($_GET['student_id'])){
     die("Error: No Student ID provided.");
 }
 $sid = intval($_GET['student_id']);
+
+// HELPER: Dynamic Grade Calculator
+function calculateGrade($obtained, $total) {
+    if ($total <= 0) return 'F';
+    
+    // Calculate Percentage
+    $pct = ($obtained / $total) * 100;
+    
+    // Standard Grading Scale
+    if ($pct >= 85) return 'A';
+    if ($pct >= 70) return 'B';
+    if ($pct >= 60) return 'C';
+    if ($pct >= 50) return 'D';
+    if ($pct >= 40) return 'E';
+    return 'F';
+}
 
 // 2. HANDLE EDIT SUBMISSION
 if(isset($_POST['update_student'])){
@@ -45,8 +61,7 @@ if(!$stu_q) die("Query Failed: " . $conn->error);
 $student = $stu_q->fetch_assoc();
 if(!$student) die("Student not found.");
 
-// 4. FETCH ENROLLED SUBJECTS & TEACHERS (FIXED QUERY)
-// We now join subject_teachers table and use GROUP_CONCAT for multiple teachers
+// 4. FETCH ENROLLED SUBJECTS & TEACHERS
 $enrolled_sql = "SELECT sub.subject_name, sub.subject_code, 
                  GROUP_CONCAT(u.full_name SEPARATOR ', ') as teacher_name
                  FROM student_subject_enrollment sse
@@ -60,12 +75,15 @@ $enrolled_res = $conn->query($enrolled_sql);
 if(!$enrolled_res) die("Enrollment Query Failed: " . $conn->error);
 
 // 5. FETCH ACADEMIC MARKS
-$marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtained, sm.grade 
+$marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtained, sm.grade, sm.max_mark 
                            FROM student_marks sm
                            JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
                            JOIN subjects sub ON sse.subject_id = sub.subject_id
                            WHERE sse.student_id = $sid
                            ORDER BY sm.exam_type DESC, sub.subject_name");
+
+// 6. FETCH EXAMS FOR PRINT MODAL
+$exams_q = $conn->query("SELECT * FROM exam_types WHERE status='active' ORDER BY created_at DESC");
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -120,9 +138,9 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                     <button class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#editModal">
                         <i class="fas fa-user-edit me-2"></i> Edit
                     </button>
-                    <a href="print_marksheet.php?student_id=<?php echo $sid; ?>" target="_blank" class="btn btn-primary">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#printModal">
                         <i class="fas fa-print me-2"></i> Print Transcript
-                    </a>
+                    </button>
                 </div>
             </div>
 
@@ -185,58 +203,21 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                             <div class="tab-pane fade show active" id="personal">
                                 <h5 class="section-title">Identity & Background</h5>
                                 <div class="row">
-                                    <div class="col-md-4">
-                                        <span class="info-label">Full Name</span>
-                                        <span class="info-value"><?php echo $student['student_name']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Date of Birth</span>
-                                        <span class="info-value"><?php echo $student['birthdate']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Place of Birth</span>
-                                        <span class="info-value"><?php echo $student['birth_place']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Birth Cert No.</span>
-                                        <span class="info-value"><?php echo $student['birth_cert_no']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Race</span>
-                                        <span class="info-value"><?php echo $student['race']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Religion</span>
-                                        <span class="info-value"><?php echo $student['religion']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Nationality</span>
-                                        <span class="info-value"><?php echo $student['nationality']; ?></span>
-                                    </div>
+                                    <div class="col-md-4"><span class="info-label">Full Name</span><span class="info-value"><?php echo $student['student_name']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Date of Birth</span><span class="info-value"><?php echo $student['birthdate']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Place of Birth</span><span class="info-value"><?php echo $student['birth_place']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Birth Cert No.</span><span class="info-value"><?php echo $student['birth_cert_no']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Race</span><span class="info-value"><?php echo $student['race']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Religion</span><span class="info-value"><?php echo $student['religion']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Nationality</span><span class="info-value"><?php echo $student['nationality']; ?></span></div>
                                 </div>
-                                
                                 <h5 class="section-title mt-4">Contact & Status</h5>
                                 <div class="row">
-                                    <div class="col-md-8">
-                                        <span class="info-label">Home Address</span>
-                                        <span class="info-value"><?php echo $student['address']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Date Enrolled</span>
-                                        <span class="info-value"><?php echo $student['enrollment_date']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Previous School</span>
-                                        <span class="info-value"><?php echo $student['previous_school']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Is Orphan?</span>
-                                        <span class="info-value"><?php echo $student['is_orphan']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Baitulmal Recipient?</span>
-                                        <span class="info-value"><?php echo $student['is_baitulmal_recipient']; ?></span>
-                                    </div>
+                                    <div class="col-md-8"><span class="info-label">Home Address</span><span class="info-value"><?php echo $student['address']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Date Enrolled</span><span class="info-value"><?php echo $student['enrollment_date']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Previous School</span><span class="info-value"><?php echo $student['previous_school']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Is Orphan?</span><span class="info-value"><?php echo $student['is_orphan']; ?></span></div>
+                                    <div class="col-md-4"><span class="info-label">Baitulmal Recipient?</span><span class="info-value"><?php echo $student['is_baitulmal_recipient']; ?></span></div>
                                 </div>
                             </div>
 
@@ -250,7 +231,6 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                         <span class="info-label">Occupation</span> <span class="info-value"><?php echo $student['father_job']; ?></span>
                                         <span class="info-label">Salary</span> <span class="info-value">RM <?php echo $student['father_salary']; ?></span>
                                     </div>
-                                    
                                     <div class="col-md-6">
                                         <h5 class="section-title text-danger"><i class="fas fa-female me-2"></i> Mother's Details</h5>
                                         <span class="info-label">Name</span> <span class="info-value"><?php echo $student['mother_name']; ?></span>
@@ -260,67 +240,27 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                         <span class="info-label">Salary</span> <span class="info-value">RM <?php echo $student['mother_salary']; ?></span>
                                     </div>
                                 </div>
-                                <hr>
-                                <h5 class="section-title">Guardian (If Applicable)</h5>
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <span class="info-label">Name</span> <span class="info-value"><?php echo $student['guardian_name']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Contact</span> <span class="info-value"><?php echo $student['guardian_phone']; ?></span>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <span class="info-label">Relation</span> <span class="info-value">
-                                            <?php echo ($student['guardian_name']) ? 'Guardian' : '-'; ?>
-                                        </span>
-                                    </div>
-                                </div>
                             </div>
 
                             <div class="tab-pane fade" id="cocurriculum">
                                 <h5 class="section-title">Uniform Bodies</h5>
                                 <div class="row mb-3">
-                                    <div class="col-md-6">
-                                        <span class="info-label">Unit Name</span>
-                                        <span class="info-value fw-bold text-primary"><?php echo $student['uniform_unit']; ?></span>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <span class="info-label">Position Held</span>
-                                        <span class="info-value"><?php echo $student['uniform_position']; ?></span>
-                                    </div>
+                                    <div class="col-md-6"><span class="info-label">Unit Name</span><span class="info-value fw-bold text-primary"><?php echo $student['uniform_unit']; ?></span></div>
+                                    <div class="col-md-6"><span class="info-label">Position Held</span><span class="info-value"><?php echo $student['uniform_position']; ?></span></div>
                                 </div>
-                                
                                 <h5 class="section-title">Clubs & Associations</h5>
                                 <div class="row mb-3">
-                                    <div class="col-md-6">
-                                        <span class="info-label">Club Name</span>
-                                        <span class="info-value fw-bold text-success"><?php echo $student['club_association']; ?></span>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <span class="info-label">Position Held</span>
-                                        <span class="info-value"><?php echo $student['club_position']; ?></span>
-                                    </div>
+                                    <div class="col-md-6"><span class="info-label">Club Name</span><span class="info-value fw-bold text-success"><?php echo $student['club_association']; ?></span></div>
+                                    <div class="col-md-6"><span class="info-label">Position Held</span><span class="info-value"><?php echo $student['club_position']; ?></span></div>
                                 </div>
-                                
                                 <h5 class="section-title">Sports & Games</h5>
                                 <div class="row mb-3">
-                                    <div class="col-md-6">
-                                        <span class="info-label">Sport Name</span>
-                                        <span class="info-value fw-bold text-warning"><?php echo $student['sports_game']; ?></span>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <span class="info-label">Position Held</span>
-                                        <span class="info-value"><?php echo $student['sports_position']; ?></span>
-                                    </div>
-                                    <div class="col-md-6 mt-2">
-                                        <span class="info-label">Sports House</span>
-                                        <span class="info-value text-uppercase fw-bold"><?php echo $student['sports_house']; ?></span>
-                                    </div>
+                                    <div class="col-md-6"><span class="info-label">Sport Name</span><span class="info-value fw-bold text-warning"><?php echo $student['sports_game']; ?></span></div>
+                                    <div class="col-md-6"><span class="info-label">Position Held</span><span class="info-value"><?php echo $student['sports_position']; ?></span></div>
                                 </div>
                             </div>
 
                             <div class="tab-pane fade" id="academic">
-                                
                                 <h5 class="section-title"><i class="fas fa-book-open me-2"></i> Enrolled Subjects</h5>
                                 <div class="table-responsive mb-4">
                                     <table class="table table-sm table-bordered mb-0">
@@ -360,22 +300,28 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                                             <tr>
                                                 <th>Exam Type</th>
                                                 <th>Subject</th>
-                                                <th class="text-center">Mark</th>
+                                                <th class="text-center">Mark / Max</th>
                                                 <th class="text-center">Grade</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             <?php if($marks_res && $marks_res->num_rows > 0): ?>
-                                                <?php while($m = $marks_res->fetch_assoc()): ?>
+                                                <?php while($m = $marks_res->fetch_assoc()): 
+                                                    // Updated: Calculate grade dynamically based on max mark
+                                                    $max = ($m['max_mark'] > 0) ? floatval($m['max_mark']) : 100;
+                                                    $score = floatval($m['mark_obtained']);
+                                                    $grade = calculateGrade($score, $max);
+                                                ?>
                                                 <tr>
                                                     <td class="fw-bold"><?php echo $m['exam_type']; ?></td>
                                                     <td><?php echo $m['subject_name']; ?></td>
-                                                    <td class="text-center fw-bold"><?php echo $m['mark_obtained']; ?></td>
+                                                    <td class="text-center fw-bold">
+                                                        <?php echo $score; ?> <span class="text-muted small fw-normal">/ <?php echo $max; ?></span>
+                                                    </td>
                                                     <td class="text-center">
                                                         <?php 
-                                                        $g = $m['grade'];
-                                                        $badge = ($g=='A'||$g=='B')?'success':(($g=='C')?'warning':'danger');
-                                                        echo "<span class='badge bg-$badge'>$g</span>";
+                                                        $badge = ($grade=='A'||$grade=='B')?'success':(($grade=='C')?'warning':'danger');
+                                                        echo "<span class='badge bg-$badge'>$grade</span>";
                                                         ?>
                                                     </td>
                                                 </tr>
@@ -392,6 +338,43 @@ $marks_res = $conn->query("SELECT sub.subject_name, sm.exam_type, sm.mark_obtain
                 </div>
             </div>
 
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="printModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="fas fa-print me-2 text-primary"></i> Print Transcript</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">Select an examination term to generate the official marksheet.</p>
+                <form action="print_marksheet.php" method="GET" target="_blank">
+                    <input type="hidden" name="student_id" value="<?php echo $sid; ?>">
+                    
+                    <div class="mb-3">
+                        <label for="examSelect" class="form-label fw-bold">Select Exam Type:</label>
+                        <select name="exam_id" id="examSelect" class="form-select" required>
+                            <option value="">-- Choose Exam Term --</option>
+                            <?php 
+                            if($exams_q->num_rows > 0){
+                                while($ex = $exams_q->fetch_assoc()){
+                                    echo "<option value='".$ex['exam_id']."'>".$ex['exam_name']." (Max: ".$ex['max_marks'].")</option>";
+                                }
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary fw-bold">
+                            <i class="fas fa-file-pdf me-2"></i> Generate PDF
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </div>

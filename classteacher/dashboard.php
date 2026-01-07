@@ -215,7 +215,7 @@ $notices = $conn->query("SELECT * FROM notices WHERE audience IN ('all', 'class_
                                                 </div>
                                             </td>
                                             <td class="text-end pe-4">
-                                                <a href="../subjectTeacher/manage_marks.php?subject_id=<?php echo $sub['subject_id']; ?>" class="btn btn-sm btn-outline-primary">
+                                                <a href="grade_book.php?subject_id=<?php echo $sub['subject_id']; ?>" class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-pen-alt me-1"></i> Grade
                                                 </a>
                                             </td>

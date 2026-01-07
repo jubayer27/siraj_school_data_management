@@ -3,7 +3,7 @@ session_start();
 include '../config/db.php';
 
 // 1. AUTHENTICATION
-if ($_SESSION['role'] != 'subject_teacher' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'class_teacher') {
+if (!isset($_SESSION['role']) || !in_array($_SESSION['role'], ['subject_teacher', 'admin', 'class_teacher'])) {
     header("Location: ../index.php");
     exit();
 }
@@ -12,24 +12,60 @@ $teacher_id = $_SESSION['user_id'];
 $alert_msg = "";
 $alert_type = "";
 
+// --- HELPER: Grade Calculator (Based on Ratio) ---
+function calculateGrade($obtained, $total)
+{
+    if ($total <= 0)
+        return 'F';
+
+    // Calculate Percentage
+    $percentage = ($obtained / $total) * 100;
+
+    // Standard Malaysian/Common Grading Scale (Adjust as needed)
+    if ($percentage >= 80)
+        return 'A'; // 80-100%
+    if ($percentage >= 60)
+        return 'B'; // 60-79%
+    if ($percentage >= 40)
+        return 'C'; // 40-59%
+    if ($percentage >= 35)
+        return 'D'; // 35-39%
+    if ($percentage >= 1)
+        return 'E'; // 1-34%
+    return 'F'; // 0 or Absent
+}
+
 // Helper to check subject ownership
 function is_authorized($conn, $sid, $tid)
 {
-    // Admins have access to everything
     if ($_SESSION['role'] == 'admin')
         return true;
-
     $q = $conn->query("SELECT 1 FROM subject_teachers WHERE subject_id = $sid AND teacher_id = $tid");
     return ($q->num_rows > 0);
 }
 
 // ---------------------------------------------------------
-// 0. FETCH ACTIVE EXAMS (Dynamic)
+// 0. FETCH ACTIVE EXAMS
 // ---------------------------------------------------------
-$exam_query = $conn->query("SELECT * FROM exam_types WHERE status = 'active' ORDER BY created_at DESC");
 $active_exams = [];
+$exam_query = $conn->query("SELECT * FROM exam_types WHERE status = 'active' ORDER BY created_at DESC");
 while ($row = $exam_query->fetch_assoc()) {
     $active_exams[] = $row;
+}
+
+// ---------------------------------------------------------
+// 1. GET MAX MARKS FOR SELECTED EXAM
+// ---------------------------------------------------------
+$current_max_mark = 100; // Default
+$sel_exam_name = isset($_REQUEST['exam_type']) ? $_REQUEST['exam_type'] : '';
+
+if ($sel_exam_name) {
+    // Safe fetch of max mark based on name
+    $ename_safe = $conn->real_escape_string($sel_exam_name);
+    $mq = $conn->query("SELECT max_marks FROM exam_types WHERE exam_name = '$ename_safe' LIMIT 1");
+    if ($mq && $mq->num_rows > 0) {
+        $current_max_mark = floatval($mq->fetch_assoc()['max_marks']);
+    }
 }
 
 // ---------------------------------------------------------
@@ -37,7 +73,6 @@ while ($row = $exam_query->fetch_assoc()) {
 // ---------------------------------------------------------
 if (isset($_POST['export_csv'])) {
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type']; // Exam Name
 
     if (is_authorized($conn, $sid, $teacher_id)) {
         $sub_info = $conn->query("SELECT subject_name, subject_code FROM subjects WHERE subject_id = $sid")->fetch_assoc();
@@ -45,17 +80,17 @@ if (isset($_POST['export_csv'])) {
         $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
                 FROM students st 
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$etype'
+                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$sel_exam_name'
                 WHERE sse.subject_id = $sid
                 ORDER BY st.student_name ASC";
         $rows = $conn->query($sql);
 
-        $filename = $sub_info['subject_code'] . "_" . str_replace(' ', '', $etype) . "_Marks.csv";
+        $filename = $sub_info['subject_code'] . "_" . str_replace(' ', '', $sel_exam_name) . ".csv";
         header('Content-Type: text/csv');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
 
         $output = fopen('php://output', 'w');
-        fputcsv($output, array('Register No', 'Student Name', 'Mark (0-100)'));
+        fputcsv($output, array('Register No', 'Student Name', "Mark (Max: $current_max_mark)"));
 
         while ($row = $rows->fetch_assoc()) {
             fputcsv($output, $row);
@@ -72,7 +107,6 @@ include 'includes/header.php';
 // ---------------------------------------------------------
 if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
     $filename = $_FILES['csv_file']['tmp_name'];
 
     if (is_authorized($conn, $sid, $teacher_id) && $_FILES['csv_file']['size'] > 0) {
@@ -85,9 +119,15 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 
             if (!isset($data[2]) || $data[2] === "")
                 continue;
+
             $mark_val = floatval($data[2]);
 
-            $g = ($mark_val >= 80) ? 'A' : (($mark_val >= 60) ? 'B' : (($mark_val >= 40) ? 'C' : 'F'));
+            // Validate Max Mark
+            if ($mark_val > $current_max_mark)
+                $mark_val = $current_max_mark; // Cap it
+
+            // Calculate Grade based on Ratio
+            $g = calculateGrade($mark_val, $current_max_mark);
 
             $find_stu = $conn->query("SELECT sse.enrollment_id 
                                       FROM students st 
@@ -97,13 +137,13 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
             if ($find_stu->num_rows > 0) {
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
 
-                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+                $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$sel_exam_name'");
                 if ($chk->num_rows > 0) {
-                    $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-                    $stmt->bind_param("dsis", $mark_val, $g, $eid, $etype);
+                    $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, max_mark=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                    $stmt->bind_param("ddsis", $mark_val, $current_max_mark, $g, $eid, $sel_exam_name);
                 } else {
-                    $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-                    $stmt->bind_param("isds", $eid, $etype, $mark_val, $g);
+                    $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->bind_param("isdds", $eid, $sel_exam_name, $mark_val, $current_max_mark, $g);
                 }
                 $stmt->execute();
                 $count++;
@@ -123,45 +163,47 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 // ---------------------------------------------------------
 if (isset($_POST['save_marks'])) {
     $sid = intval($_POST['subject_id']);
-    $etype = $_POST['exam_type'];
     $count = 0;
 
     if (isset($_POST['marks'])) {
         foreach ($_POST['marks'] as $eid => $val) {
             if ($val === "")
                 continue;
-            $val = floatval($val);
-            $g = ($val >= 80) ? 'A' : (($val >= 60) ? 'B' : (($val >= 40) ? 'C' : 'F'));
 
-            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$etype'");
+            $val = floatval($val);
+
+            // Validate Max (Backend Check)
+            if ($val > $current_max_mark)
+                $val = $current_max_mark;
+
+            // Dynamic Grade Calculation
+            $g = calculateGrade($val, $current_max_mark);
+
+            $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$sel_exam_name'");
             if ($chk->num_rows > 0) {
-                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, grade=? WHERE enrollment_id=? AND exam_type=?");
-                $stmt->bind_param("dsis", $val, $g, $eid, $etype);
+                // Update existing record
+                $stmt = $conn->prepare("UPDATE student_marks SET mark_obtained=?, max_mark=?, grade=? WHERE enrollment_id=? AND exam_type=?");
+                $stmt->bind_param("ddsis", $val, $current_max_mark, $g, $eid, $sel_exam_name);
             } else {
-                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, 100, ?)");
-                $stmt->bind_param("isds", $eid, $etype, $val, $g);
+                // Insert new record
+                $stmt = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, ?, ?)");
+                $stmt->bind_param("isdds", $eid, $sel_exam_name, $val, $current_max_mark, $g);
             }
             $stmt->execute();
             $count++;
         }
-        $alert_msg = "Successfully saved $count marks for " . htmlspecialchars($etype) . ".";
+        $alert_msg = "Saved $count marks successfully. (Based on Max: $current_max_mark)";
         $alert_type = "success";
     }
 }
 
-// ---------------------------------------------------------
 // 5. FETCH DATA FOR VIEW
-// ---------------------------------------------------------
-
-// Fetch Teacher's Subjects
 if ($_SESSION['role'] == 'admin') {
-    // Admin sees all subjects
     $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
                   FROM subjects s 
                   JOIN classes c ON s.class_id = c.class_id 
                   ORDER BY c.class_name, s.subject_name";
 } else {
-    // Teacher sees assigned subjects
     $sub_query = "SELECT s.subject_id, s.subject_name, c.class_name 
                   FROM subjects s 
                   JOIN subject_teachers st ON s.subject_id = st.subject_id
@@ -171,24 +213,24 @@ if ($_SESSION['role'] == 'admin') {
 }
 $my_subjects = $conn->query($sub_query);
 
-// Determine Selected Subject & Exam
 $sel_sub = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : '';
-$sel_exam = isset($_GET['exam_type']) ? $_GET['exam_type'] : '';
 
-// Default to first active exam if none selected
-if (empty($sel_exam) && !empty($active_exams)) {
-    $sel_exam = $active_exams[0]['exam_name'];
+// Default to first active exam
+if (empty($sel_exam_name) && !empty($active_exams)) {
+    $sel_exam_name = $active_exams[0]['exam_name'];
+    // Update Max Mark for the default exam
+    $current_max_mark = floatval($active_exams[0]['max_marks']);
 }
 
 $students = null;
 $stats = ['total' => 0, 'graded' => 0, 'avg' => 0];
 
-if ($sel_sub && $sel_exam) {
+if ($sel_sub && $sel_exam_name) {
     if (is_authorized($conn, $sel_sub, $teacher_id)) {
         $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_obtained, sm.grade
                 FROM students st
                 JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
-                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$sel_exam'
+                LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$sel_exam_name'
                 WHERE sse.subject_id = $sel_sub
                 ORDER BY st.student_name ASC";
         $students = $conn->query($sql);
@@ -202,8 +244,11 @@ if ($sel_sub && $sel_exam) {
                     $total_score += $row['mark_obtained'];
                 }
             }
-            if ($stats['graded'] > 0)
-                $stats['avg'] = round($total_score / $stats['graded'], 1);
+            // Average calculation (converted to percentage for consistency)
+            if ($stats['graded'] > 0) {
+                $avg_raw = $total_score / $stats['graded'];
+                $stats['avg'] = round(($avg_raw / $current_max_mark) * 100, 1) . "%";
+            }
             $students->data_seek(0);
         }
     } else {
@@ -230,7 +275,7 @@ if ($sel_sub && $sel_exam) {
                     </button>
                     <form method="POST" style="margin:0;">
                         <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                        <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
+                        <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam_name); ?>">
                         <button type="submit" name="export_csv" class="btn btn-primary" style="background:#27ae60;">
                             <i class="fas fa-file-download"></i> Export CSV
                         </button>
@@ -273,8 +318,8 @@ if ($sel_sub && $sel_exam) {
                                 <option value="">No Active Exams</option>
                             <?php else: ?>
                                 <?php foreach ($active_exams as $ex): ?>
-                                    <option value="<?php echo htmlspecialchars($ex['exam_name']); ?>" <?php echo ($sel_exam == $ex['exam_name']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($ex['exam_name']); ?>
+                                    <option value="<?php echo htmlspecialchars($ex['exam_name']); ?>" <?php echo ($sel_exam_name == $ex['exam_name']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($ex['exam_name']); ?> (Max: <?php echo $ex['max_marks']; ?>)
                                     </option>
                                 <?php endforeach; ?>
                             <?php endif; ?>
@@ -293,9 +338,11 @@ if ($sel_sub && $sel_exam) {
             <p>Upload a CSV file with columns: <strong>Register No</strong>, <strong>Name</strong>,
                 <strong>Mark</strong>.
             </p>
+            <p class="small text-danger">Note: Marks greater than <strong><?php echo $current_max_mark; ?></strong> will
+                be capped.</p>
             <form method="POST" enctype="multipart/form-data" class="import-form">
                 <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
+                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam_name); ?>">
                 <input type="file" name="csv_file" accept=".csv" required>
                 <button type="submit" name="import_marks" class="btn btn-primary">Process Upload</button>
             </form>
@@ -314,17 +361,22 @@ if ($sel_sub && $sel_exam) {
                 </div>
                 <div class="card stat-card">
                     <div class="stat-val text-gold"><?php echo $stats['avg']; ?></div>
-                    <div class="stat-label">Average</div>
+                    <div class="stat-label">Avg %</div>
                 </div>
             </div>
 
             <form method="POST">
                 <input type="hidden" name="subject_id" value="<?php echo $sel_sub; ?>">
-                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam); ?>">
+                <input type="hidden" name="exam_type" value="<?php echo htmlspecialchars($sel_exam_name); ?>">
 
                 <div class="card table-card">
                     <div class="card-header-row">
-                        <h3>Student Roster</h3>
+                        <div style="display:flex; flex-direction:column;">
+                            <h3>Student Roster</h3>
+                            <span style="font-size:0.85rem; color:#666;">
+                                Grading Scale: <strong>0 - <?php echo $current_max_mark; ?></strong>
+                            </span>
+                        </div>
                         <button type="submit" name="save_marks" class="btn btn-primary btn-lg">
                             <i class="fas fa-save"></i> Save Marks
                         </button>
@@ -336,7 +388,7 @@ if ($sel_sub && $sel_exam) {
                                 <tr>
                                     <th>Student</th>
                                     <th>Register No</th>
-                                    <th>Mark (0-100)</th>
+                                    <th>Mark (Max: <?php echo $current_max_mark; ?>)</th>
                                     <th>Grade</th>
                                     <th>Status</th>
                                 </tr>
@@ -356,7 +408,7 @@ if ($sel_sub && $sel_exam) {
                                             </td>
                                             <td class="mono"><?php echo $row['school_register_no']; ?></td>
                                             <td>
-                                                <input type="number" step="0.01" min="0" max="100"
+                                                <input type="number" step="0.01" min="0" max="<?php echo $current_max_mark; ?>"
                                                     name="marks[<?php echo $row['enrollment_id']; ?>]"
                                                     value="<?php echo $row['mark_obtained']; ?>" class="mark-input" placeholder="-">
                                             </td>
@@ -372,7 +424,7 @@ if ($sel_sub && $sel_exam) {
                                     <?php endwhile; ?>
                                 <?php else: ?>
                                     <tr>
-                                        <td colspan="5" class="empty-state">No students enrolled.</td>
+                                        <td colspan="5" class="empty-state">No students enrolled in this subject.</td>
                                     </tr>
                                 <?php endif; ?>
                             </tbody>
@@ -393,7 +445,13 @@ if ($sel_sub && $sel_exam) {
 </div>
 
 <style>
-    /* Styling remains the same as previously provided */
+    /* Add this specific style for the input warning on overflow */
+    .mark-input:invalid {
+        border-color: red;
+        background-color: #ffe6e6;
+    }
+
+    /* ... keep your existing CSS styles for filters, cards, tables ... */
     .filter-card {
         padding: 0;
         border: 1px solid #e0e0e0;
@@ -471,7 +529,6 @@ if ($sel_sub && $sel_exam) {
         outline: none;
     }
 
-    /* --- General Layout --- */
     .dashboard-header {
         display: flex;
         justify-content: space-between;
@@ -519,7 +576,6 @@ if ($sel_sub && $sel_exam) {
         color: #f39c12;
     }
 
-    /* --- Table --- */
     .table-card {
         padding: 0;
         overflow: hidden;
@@ -604,7 +660,6 @@ if ($sel_sub && $sel_exam) {
         color: #999;
     }
 
-    /* Import Box */
     .import-box {
         border: 2px dashed #DAA520;
         background: #fffcf5;
