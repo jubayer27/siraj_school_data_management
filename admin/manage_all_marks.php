@@ -29,8 +29,8 @@ function calculateGrade($obtained, $total)
 // ==========================================
 // 0. FETCH EXAM DETAILS (GLOBAL)
 // ==========================================
-$current_max_mark = 100; // Default
-$current_exam_name = ''; // Stores 'Midterm', 'Final', etc.
+$current_max_mark = 100;
+$current_exam_name = '';
 $sel_exam_id = isset($_GET['exam_type']) ? $_GET['exam_type'] : '';
 
 if ($sel_exam_id) {
@@ -38,31 +38,29 @@ if ($sel_exam_id) {
     if ($eq && $eq->num_rows > 0) {
         $erow = $eq->fetch_assoc();
         $current_max_mark = floatval($erow['max_marks']);
-        $current_exam_name = $erow['exam_name']; // Get the string name for DB querying
+        $current_exam_name = $erow['exam_name'];
     }
 }
 
 // ==========================================
-// 2. EXPORT LOGIC (CSV Download)
+// 2. EXPORT LOGIC
 // ==========================================
 if (isset($_POST['export_csv'])) {
     $cid = $_POST['class_id'];
     $sid = $_POST['subject_id'];
-    $etype = $_POST['exam_type']; // exam_id
+    $etype = $_POST['exam_type'];
 
-    // Fetch Exam Info
     $ename = "Exam";
     $emax = 100;
     $eq = $conn->query("SELECT exam_name, max_marks FROM exam_types WHERE exam_id = '$etype'");
     if ($eq->num_rows > 0) {
         $edata = $eq->fetch_assoc();
-        $ename_str = $edata['exam_name']; // Actual name for DB lookup
-        $ename = str_replace(' ', '', $edata['exam_name']); // For filename
+        $ename_str = $edata['exam_name'];
+        $ename = str_replace(' ', '', $edata['exam_name']);
         $emax = floatval($edata['max_marks']);
     }
 
-    // Fetch Data (Fixed JOIN to use exam_type string)
-    $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained, sm.grade 
+    $sql = "SELECT st.school_register_no, st.student_name, sm.mark_obtained 
             FROM students st 
             JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
             LEFT JOIN student_marks sm ON sse.enrollment_id = sm.enrollment_id AND sm.exam_type = '$ename_str'
@@ -70,13 +68,13 @@ if (isset($_POST['export_csv'])) {
             ORDER BY st.student_name ASC";
     $rows = $conn->query($sql);
 
-    // Set Headers
     $filename = "Marks_Class" . $cid . "_Sub" . $sid . "_" . $ename . ".csv";
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
 
     $output = fopen('php://output', 'w');
-    fputcsv($output, array('Register No', 'Student Name', "Mark (Max: $emax)", 'Grade'));
+    // Export only relevant columns for import matching
+    fputcsv($output, array('Register No', 'Student Name', "Mark (Max: $emax)"));
 
     while ($row = $rows->fetch_assoc()) {
         fputcsv($output, $row);
@@ -88,7 +86,7 @@ if (isset($_POST['export_csv'])) {
 include 'includes/header.php';
 
 // ==========================================
-// 3. IMPORT LOGIC (CSV Upload)
+// 3. IMPORT LOGIC
 // ==========================================
 $msg = "";
 $msg_type = "";
@@ -96,10 +94,9 @@ $msg_type = "";
 if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
     $cid = $_POST['class_id'];
     $sid = $_POST['subject_id'];
-    $etype = $_POST['exam_type']; // exam_id
+    $etype = $_POST['exam_type'];
     $filename = $_FILES['csv_file']['tmp_name'];
 
-    // Get Max Mark & Name
     $mq = $conn->query("SELECT max_marks, exam_name FROM exam_types WHERE exam_id = '$etype'");
     if ($mq->num_rows > 0) {
         $edata = $mq->fetch_assoc();
@@ -107,13 +104,13 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
         $import_name = $edata['exam_name'];
     } else {
         $import_max = 100;
-        $import_name = 'Midterm'; // Fallback
+        $import_name = 'Midterm';
     }
 
     if ($_FILES['csv_file']['size'] > 0) {
         $file = fopen($filename, "r");
         $count = 0;
-        fgetcsv($file); // Skip header
+        fgetcsv($file); // Skip Header
 
         while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
             $reg_no = $conn->real_escape_string(trim($data[0]));
@@ -123,11 +120,10 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 
             $mark_val = floatval($data[2]);
             if ($mark_val > $import_max)
-                $mark_val = $import_max; // Cap
+                $mark_val = $import_max;
 
             $g = calculateGrade($mark_val, $import_max);
 
-            // Find Enrollment
             $find_stu = $conn->query("SELECT sse.enrollment_id 
                                       FROM students st 
                                       JOIN student_subject_enrollment sse ON st.student_id = sse.student_id 
@@ -138,7 +134,6 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
             if ($find_stu->num_rows > 0) {
                 $eid = $find_stu->fetch_assoc()['enrollment_id'];
 
-                // Update/Insert using EXAM NAME (exam_type)
                 $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$import_name'");
 
                 if ($chk->num_rows > 0) {
@@ -146,7 +141,6 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
                     $upd->bind_param("ddss", $mark_val, $import_max, $g, $eid, $import_name);
                     $upd->execute();
                 } else {
-                    // Note: Removed exam_id from INSERT if column doesn't exist
                     $ins = $conn->prepare("INSERT INTO student_marks (enrollment_id, exam_type, mark_obtained, max_mark, grade) VALUES (?, ?, ?, ?, ?)");
                     $ins->bind_param("isdds", $eid, $import_name, $mark_val, $import_max, $g);
                     $ins->execute();
@@ -167,9 +161,8 @@ if (isset($_POST['import_marks']) && isset($_FILES['csv_file'])) {
 // 4. MANUAL SAVE LOGIC
 // ==========================================
 if (isset($_POST['save_changes'])) {
-    $etype = $_POST['exam_type']; // exam_id
+    $etype = $_POST['exam_type'];
 
-    // Get Max Mark & Name
     $mq = $conn->query("SELECT max_marks, exam_name FROM exam_types WHERE exam_id = '$etype'");
     if ($mq->num_rows > 0) {
         $edata = $mq->fetch_assoc();
@@ -189,11 +182,10 @@ if (isset($_POST['save_changes'])) {
 
             $val = floatval($val);
             if ($val > $save_max)
-                $val = $save_max; // Cap
+                $val = $save_max;
 
             $g = calculateGrade($val, $save_max);
 
-            // Use exam_type (NAME) for query
             $chk = $conn->query("SELECT mark_id FROM student_marks WHERE enrollment_id = $eid AND exam_type = '$save_name'");
 
             if ($chk->num_rows > 0) {
@@ -220,7 +212,6 @@ $exam_types = $conn->query("SELECT * FROM exam_types WHERE status='active' ORDER
 $sel_class = isset($_GET['class_id']) ? $_GET['class_id'] : '';
 $sel_subject = isset($_GET['subject_id']) ? $_GET['subject_id'] : '';
 
-// Auto-select latest exam if not set
 if (!$sel_exam_id && $exam_types->num_rows > 0) {
     $first_exam = $exam_types->fetch_assoc();
     $sel_exam_id = $first_exam['exam_id'];
@@ -240,7 +231,6 @@ $students = null;
 $stats = ['avg' => 0, 'pass' => 0, 'fail' => 0, 'max' => 0, 'grade_counts' => ['A' => 0, 'B' => 0, 'C' => 0, 'F' => 0]];
 
 if ($sel_class && $sel_subject && $sel_exam_id) {
-    // FIX: Using exam_type (name) for the JOIN
     $sql = "SELECT st.student_id, st.student_name, st.school_register_no, st.photo, sse.enrollment_id, sm.mark_id, sm.mark_obtained, sm.grade
             FROM students st
             JOIN student_subject_enrollment sse ON st.student_id = sse.student_id
@@ -249,7 +239,6 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
             ORDER BY st.student_name ASC";
     $students = $conn->query($sql);
 
-    // Calculate Stats
     $total_marks = 0;
     $count_marks = 0;
     while ($row = $students->fetch_assoc()) {
@@ -258,7 +247,6 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
             $total_marks += $m;
             $count_marks++;
 
-            // Pass Logic (40%)
             if (($m / $current_max_mark) * 100 >= 40)
                 $stats['pass']++;
             else
@@ -272,7 +260,6 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
                 $stats['grade_counts'][$grade]++;
         }
     }
-    // Avg as percentage
     if ($count_marks > 0)
         $stats['avg'] = round(($total_marks / ($count_marks * $current_max_mark)) * 100, 1) . "%";
 
@@ -284,8 +271,6 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
 <style>
-    /* ... (Your existing CSS here) ... */
-    /* Add this for validation visual */
     .input-mark:invalid {
         border-color: #e74c3c;
         background-color: #fff5f5;
@@ -349,6 +334,14 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
         border-radius: 12px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
         overflow: hidden;
+    }
+
+    .table-header {
+        padding: 20px 30px;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
 
     .custom-table {
@@ -473,7 +466,8 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
                                     <?php echo $et['exam_name']; ?> (Max: <?php echo $et['max_marks']; ?>)
                                 </option>
                             <?php endwhile; else:
-                            echo "<option value=''>No Exams Created</option>"; endif; ?>
+                            echo "<option value=''>No Exams Created</option>";
+                        endif; ?>
                     </select>
                 </div>
             </form>
@@ -548,18 +542,35 @@ if ($sel_class && $sel_subject && $sel_exam_id) {
 </div>
 
 <div id="importBox"
-    style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.2); z-index:1000; width:400px;">
-    <div class="d-flex justify-content-between mb-3">
-        <h5 class="fw-bold m-0">Import Marks</h5>
-        <button onclick="document.getElementById('importBox').style.display='none'" class="btn-close"></button>
+    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
+    <div
+        style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:12px; width:400px; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+
+        <div class="d-flex justify-content-between mb-3 align-items-center">
+            <h5 class="fw-bold m-0"><i class="fas fa-file-csv me-2 text-success"></i> Import Marks</h5>
+            <button onclick="document.getElementById('importBox').style.display='none'" class="btn-close"></button>
+        </div>
+
+        <div class="alert alert-info py-2 px-3 mb-3 small">
+            <strong>Required Column Format:</strong><br>
+            Register No, Student Name, Mark
+        </div>
+
+        <form method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="class_id" value="<?php echo $sel_class; ?>">
+            <input type="hidden" name="subject_id" value="<?php echo $sel_subject; ?>">
+            <input type="hidden" name="exam_type" value="<?php echo $sel_exam_id; ?>">
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold">Select CSV File</label>
+                <input type="file" name="csv_file" class="form-control" accept=".csv" required>
+            </div>
+
+            <button type="submit" name="import_marks" class="btn btn-primary w-100 fw-bold">
+                Upload & Process
+            </button>
+        </form>
     </div>
-    <form method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="class_id" value="<?php echo $sel_class; ?>">
-        <input type="hidden" name="subject_id" value="<?php echo $sel_subject; ?>">
-        <input type="hidden" name="exam_type" value="<?php echo $sel_exam_id; ?>">
-        <input type="file" name="csv_file" class="form-control mb-3" accept=".csv" required>
-        <button type="submit" name="import_marks" class="btn btn-primary w-100">Upload</button>
-    </form>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

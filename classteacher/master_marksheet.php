@@ -1,267 +1,463 @@
 <?php
 session_start();
 include '../config/db.php';
-include 'includes/header.php';
 
 // 1. AUTHENTICATION
-if($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin'){
-    header("Location: ../index.php"); exit(); 
+if ($_SESSION['role'] != 'class_teacher' && $_SESSION['role'] != 'admin') {
+    header("Location: ../index.php");
+    exit();
 }
 
 $teacher_id = $_SESSION['user_id'];
 
-// 2. FETCH CLASS
-$class_q = $conn->query("SELECT * FROM classes WHERE class_teacher_id = $teacher_id");
+// 2. FETCH CLASS INFO
+$class_q = $conn->query("SELECT class_id, class_name FROM classes WHERE class_teacher_id = $teacher_id");
 $my_class = $class_q->fetch_assoc();
-$cid = $my_class ? $my_class['class_id'] : 0;
+$class_id = $my_class ? $my_class['class_id'] : 0;
+$class_name = $my_class ? $my_class['class_name'] : "No Class Assigned";
 
-if(!$cid) die("<div class='main-content p-5'><h2>No class assigned.</h2></div>");
+// 3. FETCH ACTIVE EXAMS
+$exams_q = $conn->query("SELECT * FROM exam_types WHERE status='active' ORDER BY created_at DESC");
+$exam_types = [];
+while ($ex = $exams_q->fetch_assoc()) {
+    $exam_types[] = $ex;
+}
 
-// 3. SETTINGS & FILTERS
-$exam_filter = isset($_GET['exam_type']) ? $_GET['exam_type'] : 'Midterm';
-$export = isset($_GET['export']) ? $_GET['export'] : '';
+// 4. HANDLE SELECTION
+$selected_exam_id = isset($_GET['exam_id']) ? $_GET['exam_id'] : '';
+$export_mode = isset($_GET['export']) ? $_GET['export'] : '';
 
-// 4. FETCH DATA
-// A. Get All Subjects for this class (Columns)
+$current_exam_name = "";
+$current_max = 100;
+
+if ($selected_exam_id) {
+    foreach ($exam_types as $et) {
+        if ($et['exam_id'] == $selected_exam_id) {
+            $current_exam_name = $et['exam_name'];
+            $current_max = floatval($et['max_marks']);
+            break;
+        }
+    }
+}
+
+// 5. HELPER: GRADE CALCULATOR
+function getGrade($score, $max)
+{
+    if ($score === null || $score === "")
+        return "-";
+    if ($max <= 0)
+        return "-";
+    $pct = ($score / $max) * 100;
+    if ($pct >= 85)
+        return 'A';
+    if ($pct >= 70)
+        return 'B';
+    if ($pct >= 60)
+        return 'C';
+    if ($pct >= 50)
+        return 'D';
+    if ($pct >= 40)
+        return 'E';
+    return 'F';
+}
+
+// 6. FETCH DATA
 $subjects = [];
-$sub_res = $conn->query("SELECT subject_id, subject_name, subject_code FROM subjects WHERE class_id = $cid ORDER BY subject_id ASC");
-while($s = $sub_res->fetch_assoc()) $subjects[] = $s;
-
-// B. Get All Students (Rows)
 $students = [];
-$stu_res = $conn->query("SELECT student_id, student_name, school_register_no FROM students WHERE class_id = $cid ORDER BY student_name ASC");
-while($stu = $stu_res->fetch_assoc()) {
-    $stu['marks'] = []; // Placeholder for subject marks
-    $stu['total'] = 0;
-    $stu['max_total'] = 0;
-    $stu['failed_subjects'] = 0;
-    $students[$stu['student_id']] = $stu;
-}
+$marks_map = [];
 
-// C. Get All Marks for this Exam & Class
-$sql_marks = "SELECT sse.student_id, sse.subject_id, sm.mark_obtained 
-              FROM student_marks sm
-              JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
-              JOIN students st ON sse.student_id = st.student_id
-              WHERE st.class_id = $cid AND sm.exam_type = '$exam_filter'";
-$marks_res = $conn->query($sql_marks);
+if ($class_id && $selected_exam_id) {
+    // Subjects
+    $sub_sql = "SELECT DISTINCT s.subject_id, s.subject_name, s.subject_code 
+                FROM subjects s 
+                JOIN student_subject_enrollment sse ON s.subject_id = sse.subject_id
+                JOIN students st ON sse.student_id = st.student_id
+                WHERE st.class_id = $class_id ORDER BY s.subject_name";
+    $sub_res = $conn->query($sub_sql);
+    while ($row = $sub_res->fetch_assoc()) {
+        $subjects[] = $row;
+    }
 
-// D. Map Marks to Students
-while($m = $marks_res->fetch_assoc()){
-    if(isset($students[$m['student_id']])){
-        $students[$m['student_id']]['marks'][$m['subject_id']] = $m['mark_obtained'];
+    // Students
+    $stu_sql = "SELECT student_id, student_name, school_register_no 
+                FROM students WHERE class_id = $class_id ORDER BY student_name";
+    $stu_res = $conn->query($stu_sql);
+    while ($row = $stu_res->fetch_assoc()) {
+        $students[] = $row;
+    }
+
+    // Marks
+    $mark_sql = "SELECT sse.student_id, sse.subject_id, sm.mark_obtained 
+                 FROM student_marks sm
+                 JOIN student_subject_enrollment sse ON sm.enrollment_id = sse.enrollment_id
+                 JOIN students st ON sse.student_id = st.student_id
+                 WHERE st.class_id = $class_id AND sm.exam_type = '$current_exam_name'";
+    $mark_res = $conn->query($mark_sql);
+    while ($row = $mark_res->fetch_assoc()) {
+        $marks_map[$row['student_id']][$row['subject_id']] = $row['mark_obtained'];
     }
 }
 
-// 5. CALCULATE RESULTS & RANKING
-foreach($students as $sid => $data){
-    foreach($subjects as $sub){
-        $sub_id = $sub['subject_id'];
-        if(isset($data['marks'][$sub_id])){
-            $mark = $data['marks'][$sub_id];
-            $students[$sid]['total'] += $mark;
-            $students[$sid]['max_total'] += 100; // Assume 100 per subject
-            if($mark < 40) $students[$sid]['failed_subjects']++;
+// ==========================================
+// 7. EXPORT LOGIC (FIXED: Uses CSV Format)
+// ==========================================
+if ($export_mode == 'excel' && $class_id && $selected_exam_id) {
+    // Clear buffer to prevent HTML tags in file
+    if (ob_get_length())
+        ob_clean();
+
+    $filename = "MasterSheet_" . str_replace(' ', '_', $class_name) . "_" . date('Y-m-d') . ".csv";
+
+    // Set headers for CSV download
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $output = fopen('php://output', 'w');
+
+    // Add BOM for Excel UTF-8 compatibility (Symbols/Arabic etc)
+    fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
+
+    // Title Rows
+    fputcsv($output, ["MASTER MARKSHEET: " . $class_name]);
+    fputcsv($output, ["Exam: $current_exam_name", "Max Marks: $current_max"]);
+    fputcsv($output, []); // Blank row
+
+    // Construct Column Headers
+    $headers = ['No', 'Reg No', 'Student Name'];
+    foreach ($subjects as $sub) {
+        $headers[] = $sub['subject_code']; // Subject Code as Header
+    }
+    $headers[] = 'TOTAL';
+    $headers[] = 'AVG %';
+
+    fputcsv($output, $headers);
+
+    // Write Data Rows
+    $i = 1;
+    foreach ($students as $stu) {
+        $sid = $stu['student_id'];
+        $total_score = 0;
+        $subject_count = 0;
+
+        $row_data = [
+            $i++,
+            $stu['school_register_no'],
+            $stu['student_name']
+        ];
+
+        foreach ($subjects as $sub) {
+            $sub_id = $sub['subject_id'];
+            $score = isset($marks_map[$sid][$sub_id]) ? $marks_map[$sid][$sub_id] : null;
+
+            if ($score !== null) {
+                $total_score += floatval($score);
+                $subject_count++;
+                $row_data[] = $score;
+            } else {
+                $row_data[] = "-";
+            }
         }
-    }
-    // Calculate Average / Percentage
-    $count = count($data['marks']);
-    $students[$sid]['avg'] = ($count > 0) ? round($students[$sid]['total'] / $count, 1) : 0;
-    $students[$sid]['percent'] = ($students[$sid]['max_total'] > 0) ? round(($students[$sid]['total'] / $students[$sid]['max_total']) * 100, 1) : 0;
-}
 
-// Sort by Total Score Descending (For Ranking)
-usort($students, function($a, $b) {
-    return $b['total'] <=> $a['total'];
-});
+        // Summary Calculations
+        $row_data[] = ($subject_count > 0) ? $total_score : '-';
 
-// Assign Rank
-$rank = 1;
-foreach($students as $key => $val) {
-    $students[$key]['rank'] = $rank++;
-}
-
-// 6. EXPORT LOGIC (Excel)
-if($export == 'excel'){
-    ob_end_clean();
-    $filename = "MasterSheet_" . $my_class['class_name'] . "_" . $exam_filter . "_" . date('Ymd');
-    header("Content-Type: application/vnd.ms-excel");
-    header("Content-Disposition: attachment; filename=\"$filename.xls\"");
-    
-    echo "<table border='1'><thead><tr>
-            <th>Rank</th><th>Reg No</th><th>Student Name</th>";
-    foreach($subjects as $sub) echo "<th>{$sub['subject_code']}</th>";
-    echo "<th>Total</th><th>Avg</th><th>Result</th></tr></thead><tbody>";
-    
-    foreach($students as $stu){
-        echo "<tr>
-            <td>{$stu['rank']}</td>
-            <td>{$stu['school_register_no']}</td>
-            <td>{$stu['student_name']}</td>";
-        foreach($subjects as $sub){
-            $m = isset($stu['marks'][$sub['subject_id']]) ? $stu['marks'][$sub['subject_id']] : '-';
-            echo "<td>$m</td>";
+        $avg_display = "-";
+        if ($subject_count > 0 && $current_max > 0) {
+            $max_possible = $subject_count * $current_max;
+            $avg = ($total_score / $max_possible) * 100;
+            $avg_display = round($avg, 1) . "%";
         }
-        $res = ($stu['failed_subjects'] > 0) ? 'FAIL' : 'PASS';
-        echo "<td>{$stu['total']}</td><td>{$stu['avg']}</td><td>$res</td></tr>";
+        $row_data[] = $avg_display;
+
+        fputcsv($output, $row_data);
     }
-    echo "</tbody></table>";
+
+    fclose($output);
     exit();
 }
+
+include 'includes/header.php';
 ?>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
-    body { background-color: #f4f6f9; overflow-x: hidden; }
+    body {
+        background-color: #f4f6f9;
+        overflow-x: hidden;
+    }
+
     .main-content {
-        position: absolute; top: 0; right: 0;
-        width: calc(100% - 260px) !important; margin-left: 260px !important;
-        min-height: 100vh; padding: 0 !important; display: block !important;
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: calc(100% - 260px) !important;
+        margin-left: 260px !important;
+        min-height: 100vh;
+        padding: 0 !important;
+        display: block !important;
     }
-    .container-fluid { padding: 30px !important; }
-    
-    /* Table Styling for Matrix */
-    .master-table th { 
-        background-color: #2c3e50; color: white; 
-        vertical-align: middle; text-align: center; font-size: 0.85rem; 
-        white-space: nowrap;
+
+    .container-fluid {
+        padding: 30px !important;
     }
-    .master-table td { 
-        vertical-align: middle; text-align: center; font-weight: 500; font-size: 0.9rem;
+
+    .card {
+        border: none;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
     }
-    .col-name { text-align: left !important; min-width: 200px; position: sticky; left: 0; background: #fff; z-index: 10; border-right: 2px solid #ddd; }
-    .col-rank { background: #FFD700; font-weight: bold; }
-    .mark-fail { color: red; background-color: #ffebee; font-weight: bold; }
-    .mark-distinction { color: green; font-weight: bold; }
-    .result-pass { color: green; background: #e8f5e9; font-weight: bold; }
-    .result-fail { color: red; background: #fbe9e7; font-weight: bold; }
+
+    .master-table th {
+        background-color: #343a40;
+        color: white;
+        vertical-align: middle;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        text-align: center;
+    }
+
+    .master-table td {
+        vertical-align: middle;
+        border-color: #f0f0f0;
+    }
+
+    .stu-col {
+        position: sticky;
+        left: 0;
+        background-color: #fff;
+        z-index: 5;
+        border-right: 2px solid #dee2e6;
+        min-width: 250px;
+        text-align: left !important;
+    }
+
+    .master-table th:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 15;
+        border-right: 2px solid #555;
+    }
+
+    .mark-cell {
+        font-weight: bold;
+        font-size: 0.95rem;
+    }
+
+    .grade-small {
+        font-size: 0.7rem;
+        color: #888;
+        display: block;
+        line-height: 1;
+        margin-top: 2px;
+    }
+
+    .text-missing {
+        color: #ccc;
+        font-weight: normal;
+    }
 
     @media print {
-        .no-print, .sidebar { display: none !important; }
-        .main-content { width: 100% !important; margin: 0 !important; }
-        .master-table { font-size: 10pt; }
-        .col-name { position: static; border: 1px solid #000; }
-        @page { size: landscape; }
+
+        .no-print,
+        .sidebar {
+            display: none !important;
+        }
+
+        .main-content {
+            margin: 0 !important;
+            width: 100% !important;
+            padding: 0 !important;
+        }
+
+        .container-fluid {
+            padding: 10px !important;
+        }
+
+        .card {
+            box-shadow: none !important;
+            border: 1px solid #000 !important;
+        }
+
+        .master-table th {
+            background-color: #ddd !important;
+            color: #000 !important;
+        }
+
+        .stu-col {
+            border-right: 1px solid #000 !important;
+        }
+
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    @media (max-width: 992px) {
+        .main-content {
+            width: 100% !important;
+            margin-left: 0 !important;
+        }
     }
 </style>
 
 <div class="wrapper">
     <div class="no-print"><?php include 'includes/sidebar.php'; ?></div>
-    
+
     <div class="main-content">
         <div class="container-fluid">
-            
+
             <div class="d-flex justify-content-between align-items-center mb-4 no-print">
                 <div>
-                    <h2 class="fw-bold text-dark mb-0">Master Marksheet</h2>
-                    <p class="text-secondary mb-0">
-                        Class: <strong><?php echo $my_class['class_name']; ?></strong> | 
-                        Total Students: <strong><?php echo count($students); ?></strong>
+                    <h2 class="fw-bold text-dark mb-1">Master Marksheet</h2>
+                    <p class="text-secondary mb-0">Consolidated results for <strong><?php echo $class_name; ?></strong>
                     </p>
                 </div>
-                
-                <div class="d-flex gap-2 align-items-center">
-                    <form method="GET" class="d-flex gap-2">
-                        <select name="exam_type" class="form-select" onchange="this.form.submit()">
-                            <option value="Midterm" <?php echo $exam_filter=='Midterm'?'selected':''; ?>>Midterm</option>
-                            <option value="Final" <?php echo $exam_filter=='Final'?'selected':''; ?>>Final Exam</option>
-                            <option value="Quiz 1" <?php echo $exam_filter=='Quiz 1'?'selected':''; ?>>Quiz 1</option>
-                        </select>
-                    </form>
-                    
-                    <a href="?exam_type=<?php echo $exam_filter; ?>&export=excel" class="btn btn-success">
-                        <i class="fas fa-file-excel me-2"></i> Export Excel
-                    </a>
-                    <button onclick="window.print()" class="btn btn-warning fw-bold">
-                        <i class="fas fa-print me-2"></i> Print
+                <div class="d-flex gap-2">
+                    <?php if ($selected_exam_id): ?>
+                        <a href="?exam_id=<?php echo $selected_exam_id; ?>&export=excel"
+                            class="btn btn-success shadow-sm fw-bold">
+                            <i class="fas fa-file-csv me-2"></i> Export Excel
+                        </a>
+                    <?php endif; ?>
+                    <button onclick="window.print()" class="btn btn-outline-dark shadow-sm fw-bold">
+                        <i class="fas fa-print me-2"></i> Print Sheet
                     </button>
                 </div>
             </div>
 
-            <div class="d-none d-print-block text-center mb-4">
-                <h2 class="fw-bold">SEKOLAH INTEGRASI RENDAH AGAMA JAWI (SIRAJ) AL ALUSI</h2>
-                <h4>MASTER MARKSHEET: <?php echo strtoupper($my_class['class_name']); ?> - <?php echo strtoupper($exam_filter); ?></h4>
-            </div>
+            <?php if (!$class_id): ?>
+                <div class="alert alert-warning border-0 shadow-sm d-flex align-items-center no-print">
+                    <i class="fas fa-exclamation-triangle me-3 fa-2x"></i>
+                    <div><strong>No Class Assigned.</strong><br>You are not currently listed as a Class Teacher.</div>
+                </div>
+            <?php else: ?>
 
-            <div class="card shadow-sm border-0">
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-bordered table-hover mb-0 master-table">
-                            <thead>
-                                <tr>
-                                    <th class="col-rank">Pos</th>
-                                    <th>Reg No</th>
-                                    <th class="col-name text-center">Student Name</th>
-                                    
-                                    <?php foreach($subjects as $sub): ?>
-                                        <th title="<?php echo $sub['subject_name']; ?>">
-                                            <?php echo $sub['subject_code']; ?><br>
-                                            <span style="font-size:0.7rem; font-weight:normal;">(100)</span>
-                                        </th>
+                <div class="card mb-4 no-print">
+                    <div class="card-body py-3">
+                        <form method="GET" class="row align-items-center">
+                            <label class="col-auto fw-bold text-muted">Select Examination Term:</label>
+                            <div class="col-md-4">
+                                <select name="exam_id" class="form-select border-primary" onchange="this.form.submit()">
+                                    <option value="">-- Choose Exam --</option>
+                                    <?php foreach ($exam_types as $et): ?>
+                                        <option value="<?php echo $et['exam_id']; ?>" <?php echo ($selected_exam_id == $et['exam_id']) ? 'selected' : ''; ?>>
+                                            <?php echo $et['exam_name']; ?> (Max: <?php echo $et['max_marks']; ?>)
+                                        </option>
                                     <?php endforeach; ?>
-                                    
-                                    <th class="bg-dark text-white">Grand<br>Total</th>
-                                    <th class="bg-dark text-white">Avg<br>(%)</th>
-                                    <th class="bg-dark text-white">Result</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if(empty($students)): ?>
-                                    <tr><td colspan="<?php echo count($subjects) + 6; ?>" class="p-5 text-muted">No students found in this class.</td></tr>
-                                <?php else: ?>
-                                    
-                                    <?php foreach($students as $stu): 
-                                        $is_pass = ($stu['failed_subjects'] == 0 && count($stu['marks']) > 0);
-                                    ?>
-                                    <tr>
-                                        <td class="col-rank"><?php echo $stu['rank']; ?></td>
-                                        
-                                        <td class="font-monospace small"><?php echo $stu['school_register_no']; ?></td>
-                                        
-                                        <td class="col-name text-start fw-bold text-dark"><?php echo $stu['student_name']; ?></td>
-                                        
-                                        <?php foreach($subjects as $sub): 
-                                            $mark = isset($stu['marks'][$sub['subject_id']]) ? $stu['marks'][$sub['subject_id']] : ''; 
-                                            // Style logic
-                                            $cell_style = "";
-                                            if($mark !== '') {
-                                                if($mark < 40) $cell_style = "mark-fail";
-                                                elseif($mark >= 80) $cell_style = "mark-distinction";
-                                            } else {
-                                                $mark = "-";
-                                            }
-                                        ?>
-                                            <td class="<?php echo $cell_style; ?>"><?php echo $mark; ?></td>
-                                        <?php endforeach; ?>
-                                        
-                                        <td class="fw-bold bg-light border-start border-dark"><?php echo $stu['total']; ?></td>
-                                        
-                                        <td class="fw-bold bg-light"><?php echo $stu['avg']; ?></td>
-                                        
-                                        <td class="<?php echo $is_pass ? 'result-pass' : 'result-fail'; ?>">
-                                            <?php echo $is_pass ? 'PASS' : 'FAIL'; ?>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                    
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+                                </select>
+                            </div>
+                        </form>
                     </div>
                 </div>
-            </div>
 
-            <div class="d-none d-print-block mt-4 small">
-                <strong>Legend:</strong> 
-                <span class="text-success fw-bold me-3">Green: Distinction (80+)</span>
-                <span class="text-danger fw-bold me-3">Red: Fail (<40)</span>
-                <span>Pos: Position in Class</span>
-                <br>
-                <em>Computer generated document. Date: <?php echo date('d/m/Y'); ?></em>
-            </div>
+                <?php if ($selected_exam_id): ?>
 
+                    <div class="d-none d-print-block text-center mb-4">
+                        <h2 class="text-uppercase m-0">Master Marksheet: <?php echo $class_name; ?></h2>
+                        <p class="m-0">Exam: <strong><?php echo $current_exam_name; ?></strong> | Max Marks:
+                            <strong><?php echo $current_max; ?></strong>
+                        </p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 75vh;">
+                                <table class="table table-bordered mb-0 master-table text-center">
+                                    <thead>
+                                        <tr>
+                                            <th class="stu-col" style="z-index: 20;">Student Name</th>
+                                            <?php foreach ($subjects as $sub): ?>
+                                                <th>
+                                                    <div style="font-size:0.9rem;"><?php echo $sub['subject_code']; ?></div>
+                                                    <div style="font-size:0.65rem; font-weight:normal; opacity:0.8;"
+                                                        title="<?php echo $sub['subject_name']; ?>">
+                                                        <?php echo substr($sub['subject_name'], 0, 10) . (strlen($sub['subject_name']) > 10 ? '..' : ''); ?>
+                                                    </div>
+                                                </th>
+                                            <?php endforeach; ?>
+                                            <th class="bg-dark text-white">Total</th>
+                                            <th class="bg-dark text-white">Avg %</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($students)): ?>
+                                            <tr>
+                                                <td colspan="<?php echo count($subjects) + 3; ?>" class="p-5 text-muted">No students
+                                                    found in this class.</td>
+                                            </tr>
+                                        <?php else: ?>
+                                            <?php foreach ($students as $stu):
+                                                $sid = $stu['student_id'];
+                                                $total_score = 0;
+                                                $subject_count = 0;
+                                                ?>                                        <tr>                                    <td class="stu-col">
+                                                                        <div class="fw-bold text-dark"><?php echo $stu['student_name']; ?></div>
+                                                        <small
+                                                                class="text-muted font-monospace"><?php echo $stu['school_register_no']; ?></small>
+                                                                    </td>
+                                                        <?php foreach ($subjects as $sub):
+                                                            $sub_id = $sub['subject_id'];
+                                                            $score = isset($marks_map[$sid][$sub_id]) ? $marks_map[$sid][$sub_id] : null;
+
+                                                            if ($score !== null) {
+                                                                $total_score += floatval($score);
+                                                                $subject_count++;
+                                                                $grade = getGrade(floatval($score), $current_max);
+                                                                $color = ($grade == 'F') ? 'text-danger' : 'text-dark';
+                                                                echo "<td><div class='mark-cell $color'>$score</div><span class='grade-small'>$grade</span></td>";
+                                                            } else {
+                                                                echo "<td><span class='text-missing'>-</span></td>";
+                                                            }
+                                                            ?>
+                                                            <?php endforeach; ?>
+                                                            <td class="bg-light fw-bold border-start border-2">
+                                                                        <?php echo ($subject_count > 0) ? $total_score : '-'; ?>
+                                                                </td>
+                                                            <td class="bg-light fw-bold text-primary">
+                                                                <?php
+                                                                if ($subject_count > 0 && $current_max > 0) {
+                                                                    $max_possible = $subject_count * $current_max;
+                                                                    $avg = ($total_score / $max_possible) * 100;
+                                                                    echo round($avg, 1) . "%";
+                                                                } else {
+                                                                    echo "-";
+                                                                }
+                                                                ?>
+                                                                    </td>
+                                                                </tr>
+                                                        <?php endforeach; ?>
+                                                <?php endif; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="card-footer bg-white small text-muted no-print">
+                                    <i class="fas fa-info-circle me-1"></i> <strong>Note:</strong> Marks shown out of
+                                    <?php echo $current_max; ?>. "Total" is obtained sum. "Avg %" is based on graded subjects.
+                                </div>
+                            </div>
+
+                    <?php else: ?>
+                            <div class="text-center py-5 mt-4 bg-white rounded shadow-sm border border-dashed">
+                                <i class="fas fa-file-invoice fa-3x text-warning mb-3 opacity-50"></i>
+                                <h4 class="fw-bold text-secondary">No Exam Selected</h4>
+                                <p class="text-muted">Please select an Examination Term from the dropdown above to generate the
+                                    marksheet.</p>
+                            </div>
+                    <?php endif; ?>
+
+            <?php endif; ?>
         </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>

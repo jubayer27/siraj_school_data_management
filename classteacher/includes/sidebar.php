@@ -1,5 +1,15 @@
 <?php
 $current_page = basename($_SERVER['PHP_SELF']);
+
+// FIX: Check multiple sources for Class ID so the link doesn't disappear
+$menu_cid = 0;
+if (isset($cid) && $cid) {
+    $menu_cid = $cid;
+} elseif (isset($class_id) && $class_id) {
+    $menu_cid = $class_id;
+} elseif (isset($_SESSION['my_class_id'])) {
+    $menu_cid = $_SESSION['my_class_id'];
+}
 ?>
 
 <div class="sidebar" id="classSidebar">
@@ -62,9 +72,9 @@ $current_page = basename($_SERVER['PHP_SELF']);
             </a>
         </li>
 
-        <?php if (isset($cid) && $cid): ?>
+        <?php if ($menu_cid): ?>
             <li>
-                <a href="master_marksheet.php?class_id=<?php echo $cid; ?>" target="_blank">
+                <a href="master_marksheet.php?class_id=<?php echo $menu_cid; ?>" target="_blank">
                     <i class="fas fa-table"></i> <span>Master Marksheet</span>
                 </a>
             </li>
