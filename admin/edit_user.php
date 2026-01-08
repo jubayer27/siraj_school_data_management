@@ -145,10 +145,15 @@ while($row = $my_subs_res->fetch_assoc()){
     .subject-item:hover { background-color: #fffcf5; }
     .taken-badge { font-size: 0.75rem; color: #e74c3c; background: #fadbd8; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
     
-    /* Input Icons */
+    /* FIX: Input Icons & Padding Overlap */
     .input-icon { position: relative; }
-    .input-icon i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #aaa; }
-    .form-control, .form-select { padding-left: 38px; border-radius: 8px; }
+    .input-icon i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #aaa; z-index: 5; }
+    
+    /* This ensures text starts after the icon */
+    .form-control, .form-select { 
+        padding-left: 40px !important; 
+        border-radius: 8px; 
+    }
     .form-control:focus { border-color: #FFD700; box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1); }
 
     @media (max-width: 992px) { .main-content { width: 100% !important; margin-left: 0 !important; } }

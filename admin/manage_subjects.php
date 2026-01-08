@@ -12,7 +12,6 @@ if ($_SESSION['role'] != 'admin') {
 // 2. HANDLE DELETION
 if (isset($_GET['delete_id'])) {
     $did = $_GET['delete_id'];
-    // Safety check: marks existence
     $chk = $conn->query("SELECT count(*) as c FROM student_marks WHERE enrollment_id IN (SELECT enrollment_id FROM student_subject_enrollment WHERE subject_id = $did)")->fetch_assoc();
 
     if ($chk['c'] > 0) {
@@ -26,39 +25,29 @@ if (isset($_GET['delete_id'])) {
     }
 }
 
-// 3. HANDLE BULK ADD SUBJECT (Many Teachers -> One Subject)
+// 3. HANDLE BULK ADD SUBJECT
 if (isset($_POST['add_subject_bulk'])) {
     $name = $_POST['subject_name'];
     $base_code = trim($_POST['subject_code']);
     $class_ids = isset($_POST['class_ids']) ? $_POST['class_ids'] : [];
-    // New: Handle multiple teachers or empty array
     $teacher_ids = isset($_POST['teacher_ids']) ? $_POST['teacher_ids'] : [];
-
     $count = 0;
     $errors = [];
 
     foreach ($class_ids as $cid) {
-        // Fetch Class Name to generate Unique Code
         $c_res = $conn->query("SELECT class_name FROM classes WHERE class_id = $cid");
         if ($c_res->num_rows > 0) {
             $c_row = $c_res->fetch_assoc();
-            // Generate Unique Code: MATH-5Amanah
-            // Remove spaces from class name for cleaner code
             $class_suffix = str_replace(' ', '', $c_row['class_name']);
             $unique_code = $base_code . "-" . $class_suffix;
 
-            // Check if this specific combo exists
             $chk = $conn->query("SELECT subject_id FROM subjects WHERE subject_code = '$unique_code'");
             if ($chk->num_rows == 0) {
-                // A. Insert Subject (No teacher_id here anymore)
                 $stmt = $conn->prepare("INSERT INTO subjects (subject_name, subject_code, class_id) VALUES (?, ?, ?)");
                 $stmt->bind_param("ssi", $name, $unique_code, $cid);
-
                 if ($stmt->execute()) {
                     $new_subject_id = $conn->insert_id;
                     $count++;
-
-                    // B. Insert Teachers into Junction Table
                     if (!empty($teacher_ids)) {
                         $stmt_t = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
                         foreach ($teacher_ids as $tid) {
@@ -72,7 +61,6 @@ if (isset($_POST['add_subject_bulk'])) {
             }
         }
     }
-
     if ($count > 0) {
         $success = "Successfully created subjects for $count classes!";
         echo "<script>if ( window.history.replaceState ) { window.history.replaceState( null, null, window.location.href ); }</script>";
@@ -83,20 +71,13 @@ if (isset($_POST['add_subject_bulk'])) {
 
 // 4. STATISTICS
 $stats_total = $conn->query("SELECT count(*) as c FROM subjects")->fetch_assoc()['c'];
-
-// Count subjects that have NO entries in subject_teachers table
-$stats_no_teacher = $conn->query("
-    SELECT count(*) as c FROM subjects s 
-    WHERE NOT EXISTS (SELECT 1 FROM subject_teachers st WHERE st.subject_id = s.subject_id)
-")->fetch_assoc()['c'];
-
+$stats_no_teacher = $conn->query("SELECT count(*) as c FROM subjects s WHERE NOT EXISTS (SELECT 1 FROM subject_teachers st WHERE st.subject_id = s.subject_id)")->fetch_assoc()['c'];
 $stats_active = $conn->query("SELECT count(DISTINCT class_id) as c FROM subjects")->fetch_assoc()['c'];
 
 // 5. FILTER LOGIC
 $filter_class = isset($_GET['class_id']) ? $_GET['class_id'] : '';
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 
-// UPDATED SQL: Joins subject_teachers and GROUP_CONCAT to get all names
 $sql = "SELECT s.*, c.class_name, 
         GROUP_CONCAT(u.full_name SEPARATOR ', ') as teacher_names,
         (SELECT COUNT(*) FROM student_subject_enrollment WHERE subject_id = s.subject_id) as enrolled_count
@@ -114,7 +95,6 @@ if ($search)
 $sql .= " GROUP BY s.subject_id ORDER BY s.subject_name ASC, c.class_name ASC";
 $subjects = $conn->query($sql);
 
-// Fetch Dropdowns
 $classes = $conn->query("SELECT * FROM classes ORDER BY class_name");
 $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY full_name");
 ?>
@@ -142,7 +122,6 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
         padding: 30px !important;
     }
 
-    /* Multi-select box style */
     .class-checkbox-list {
         max-height: 150px;
         overflow-y: auto;
@@ -189,6 +168,40 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
         border: 1px solid #eee;
         margin-right: 5px;
     }
+
+    /* --- FIXED FILTER CSS --- */
+    /* 1. Force exact height for all inputs and buttons in the filter row */
+    .filter-h {
+        height: 48px !important;
+        border-radius: 8px !important;
+    }
+
+    /* 2. Search Container for Absolute Positioning */
+    .search-container {
+        position: relative;
+        width: 100%;
+    }
+
+    /* 3. The Icon: Position absolute so it floats over the input */
+    .search-icon-overlay {
+        position: absolute;
+        left: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #adb5bd;
+        pointer-events: none;
+        /* Allows clicking through the icon */
+        z-index: 5;
+    }
+
+    /* 4. The Input: Add padding-left so text doesn't touch the icon */
+    .search-input-padded {
+        padding-left: 45px !important;
+        /* Matches icon width + space */
+        width: 100%;
+    }
+
+    /* ------------------------ */
 
     @media (max-width: 992px) {
         .main-content {
@@ -334,9 +347,9 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
 
             <div class="card border-0 shadow-sm mb-4">
                 <div class="card-body p-3">
-                    <form method="GET" class="row g-2">
-                        <div class="col-md-4">
-                            <select name="class_id" class="form-select">
+                    <form method="GET" class="row g-2 align-items-center">
+                        <div class="col-md-3">
+                            <select name="class_id" class="form-select filter-h">
                                 <option value="">Filter by Class</option>
                                 <?php
                                 $classes->data_seek(0);
@@ -347,15 +360,16 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
                                 ?>
                             </select>
                         </div>
-                        <div class="col-md-6">
-                            <div class="input-group">
-                                <span class="input-group-text bg-light"><i class="fas fa-search text-muted"></i></span>
-                                <input type="text" name="search" class="form-control"
-                                    placeholder="Search subject name..." value="<?php echo $search; ?>">
+                        <div class="col-md-7">
+                            <div class="search-container">
+                                <i class="fas fa-search search-icon-overlay"></i>
+                                <input type="text" name="search" class="form-control filter-h search-input-padded"
+                                    placeholder="Search subject name..."
+                                    value="<?php echo htmlspecialchars($search); ?>">
                             </div>
                         </div>
                         <div class="col-md-2 d-grid">
-                            <button type="submit" class="btn btn-primary fw-bold">Filter</button>
+                            <button type="submit" class="btn btn-primary fw-bold filter-h">Filter</button>
                         </div>
                     </form>
                 </div>
@@ -394,7 +408,6 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
                                             <td>
                                                 <?php if ($row['teacher_names']): ?>
                                                     <?php
-                                                    // Convert string "Name1, Name2" into badges
                                                     $names = explode(', ', $row['teacher_names']);
                                                     foreach ($names as $n):
                                                         ?>
@@ -411,12 +424,10 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
                                                 <span
                                                     class="badge bg-info-subtle text-info rounded-pill px-3"><?php echo $row['enrolled_count']; ?></span>
                                             </td>
-
                                             <td class="text-end pe-4">
                                                 <a href="view_subject.php?subject_id=<?php echo $row['subject_id']; ?>"
-                                                    class="btn btn-sm btn-outline-info me-1" title="View Details">
-                                                    <i class="fas fa-eye"></i>
-                                                </a>
+                                                    class="btn btn-sm btn-outline-info me-1" title="View Details"><i
+                                                        class="fas fa-eye"></i></a>
                                                 <a href="edit_subject.php?subject_id=<?php echo $row['subject_id']; ?>"
                                                     class="btn btn-sm btn-outline-primary me-1"><i class="fas fa-edit"></i></a>
                                                 <a href="manage_subjects.php?delete_id=<?php echo $row['subject_id']; ?>"
@@ -424,7 +435,6 @@ $teachers = $conn->query("SELECT * FROM users WHERE role != 'admin' ORDER BY ful
                                                     onclick="return confirm('Delete this subject?');"><i
                                                         class="fas fa-trash"></i></a>
                                             </td>
-
                                         </tr>
                                     <?php endwhile; ?>
                                 <?php else: ?>
