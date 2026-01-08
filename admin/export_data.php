@@ -55,10 +55,13 @@ if (isset($_POST['export_csv'])) {
 
     // --- TYPE B: STAFF / USERS ---
     elseif ($type == 'users') {
-        fputcsv($output, ['FullName', 'Username', 'Role', 'StaffID', 'IC_No', 'Phone', 'Status']);
+        // [CHANGED] Added 'Email' to headers
+        fputcsv($output, ['FullName', 'Username', 'Role', 'StaffID', 'IC_No', 'Phone', 'Email', 'Status']);
+
         $rows = $conn->query("SELECT * FROM users ORDER BY role, full_name");
         while ($r = $rows->fetch_assoc()) {
-            fputcsv($output, [$r['full_name'], $r['username'], $r['role'], $r['teacher_id_no'], $r['ic_no'], $r['phone'], 'Active']);
+            // [CHANGED] Added $r['email'] to output
+            fputcsv($output, [$r['full_name'], $r['username'], $r['role'], $r['teacher_id_no'], $r['ic_no'], $r['phone'], $r['email'], 'Active']);
         }
     }
 
@@ -268,7 +271,8 @@ include 'includes/header.php';
 
         users: <?php
         $d = [];
-        $q = $conn->query("SELECT full_name, role, teacher_id_no, phone FROM users ORDER BY role");
+        // [CHANGED] Select 'email' here for JS to use
+        $q = $conn->query("SELECT full_name, role, teacher_id_no, phone, email FROM users ORDER BY role");
         while ($r = $q->fetch_assoc())
             $d[] = $r;
         echo json_encode($d);
@@ -315,9 +319,10 @@ include 'includes/header.php';
                 html += `<tr><td>${row.school_register_no}</td><td class="fw-bold">${row.student_name}</td><td>${row.ic_no}</td><td>${row.gender}</td><td>${row.class_name || 'Unassigned'}</td></tr>`;
             });
         } else if (type === 'users') {
-            html += '<th>Name</th><th>Role</th><th>Staff ID</th><th>Phone</th></tr></thead><tbody>';
+            // [CHANGED] Added Email to Print Table Headers & Rows
+            html += '<th>Name</th><th>Role</th><th>Staff ID</th><th>Phone</th><th>Email</th></tr></thead><tbody>';
             data.forEach(row => {
-                html += `<tr><td class="fw-bold">${row.full_name}</td><td>${row.role}</td><td>${row.teacher_id_no || '-'}</td><td>${row.phone || '-'}</td></tr>`;
+                html += `<tr><td class="fw-bold">${row.full_name}</td><td>${row.role}</td><td>${row.teacher_id_no || '-'}</td><td>${row.phone || '-'}</td><td>${row.email || '-'}</td></tr>`;
             });
         } else if (type === 'classes') {
             html += '<th>Class Name</th><th>Year</th><th>Teacher</th></tr></thead><tbody>';

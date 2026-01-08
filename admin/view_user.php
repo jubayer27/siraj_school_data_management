@@ -117,6 +117,10 @@ $subjects = $conn->query("SELECT s.*, c.class_name
 
                             <div class="text-start px-2">
                                 <div class="info-list-item">
+                                    <span class="label-text"><i class="fas fa-envelope me-2"></i> Email</span>
+                                    <span class="value-text"><?php echo isset($user['email']) && $user['email'] ? $user['email'] : '-'; ?></span>
+                                </div>
+                                <div class="info-list-item">
                                     <span class="label-text"><i class="fas fa-phone me-2"></i> Phone</span>
                                     <span class="value-text"><?php echo $user['phone'] ? $user['phone'] : '-'; ?></span>
                                 </div>

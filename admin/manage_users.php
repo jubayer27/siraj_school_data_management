@@ -27,6 +27,7 @@ if (isset($_GET['delete_id'])) {
 if (isset($_POST['add_user'])) {
     $full_name = trim($_POST['full_name']);
     $username = trim($_POST['username']);
+    $email = trim($_POST['email']); // <--- [CHANGED] Capture Email
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
     $role = $_POST['role'];
     $phone = $_POST['phone'];
@@ -42,8 +43,11 @@ if (isset($_POST['add_user'])) {
     if ($result->num_rows > 0) {
         $error = "Error: Username '$username' is already taken.";
     } else {
-        $stmt = $conn->prepare("INSERT INTO users (username, password, full_name, role, phone, ic_no, teacher_id_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
-        $stmt->bind_param("sssssss", $username, $password, $full_name, $role, $phone, $ic_no, $staff_id);
+        // [CHANGED] Added 'email' to INSERT query
+        $stmt = $conn->prepare("INSERT INTO users (username, password, full_name, email, role, phone, ic_no, teacher_id_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+
+        // [CHANGED] Updated bind_param: added one 's' (8 total) and the $email variable
+        $stmt->bind_param("ssssssss", $username, $password, $full_name, $email, $role, $phone, $ic_no, $staff_id);
 
         if ($stmt->execute()) {
             $success = "New user profile created successfully!";
@@ -331,19 +335,27 @@ $users = $stmt->get_result();
                                     <option value="admin">Administrator</option>
                                 </select>
                             </div>
-                            <div class="col-md-4">
+
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">EMAIL ADDRESS</label>
+                                <input type="email" name="email" class="form-control" required
+                                    placeholder="user@example.com">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted">CONTACT PHONE</label>
+                                <input type="text" name="phone" class="form-control" placeholder="+60...">
+                            </div>
+
+                            <div class="col-md-6">
                                 <label class="form-label small fw-bold text-muted">STAFF ID</label>
                                 <input type="text" name="teacher_id_no" class="form-control"
                                     placeholder="e.g. T-2025-001">
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-6">
                                 <label class="form-label small fw-bold text-muted">IC NUMBER</label>
                                 <input type="text" name="ic_no" class="form-control" placeholder="No Dashes">
                             </div>
-                            <div class="col-md-4">
-                                <label class="form-label small fw-bold text-muted">CONTACT PHONE</label>
-                                <input type="text" name="phone" class="form-control" placeholder="+60...">
-                            </div>
+
                             <div class="col-md-6">
                                 <label class="form-label small fw-bold text-muted">USERNAME</label>
                                 <input type="text" name="username" class="form-control" required
@@ -420,7 +432,8 @@ $users = $stmt->get_result();
                                                     <img src="<?php echo $avatarUrl; ?>" class="avatar-sm">
                                                     <div>
                                                         <div class="fw-bold text-dark">
-                                                            <?php echo htmlspecialchars($row['full_name']); ?></div>
+                                                            <?php echo htmlspecialchars($row['full_name']); ?>
+                                                        </div>
                                                         <div class="small text-muted">ID: <span
                                                                 class="font-monospace"><?php echo $row['teacher_id_no'] ? htmlspecialchars($row['teacher_id_no']) : 'N/A'; ?></span>
                                                         </div>
@@ -429,7 +442,12 @@ $users = $stmt->get_result();
                                             </td>
                                             <td>
                                                 <div class="d-flex flex-column small">
-                                                    <span class="text-dark"><i class="fas fa-phone-alt text-muted me-2"
+                                                    <span class="text-dark mb-1">
+                                                        <i class="fas fa-envelope text-muted me-2" style="width:15px;"></i>
+                                                        <?php echo isset($row['email']) && $row['email'] ? htmlspecialchars($row['email']) : '-'; ?>
+                                                    </span>
+
+                                                    <span class="text-muted"><i class="fas fa-phone-alt text-muted me-2"
                                                             style="width:15px;"></i>
                                                         <?php echo $row['phone'] ? htmlspecialchars($row['phone']) : '-'; ?></span>
                                                     <span class="text-muted"><i class="fas fa-user text-muted me-2"

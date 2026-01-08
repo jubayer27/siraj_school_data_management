@@ -17,6 +17,7 @@ $msg_type = "";
 // 2. LOGIC: UPDATE PROFILE
 if (isset($_POST['update_profile'])) {
     $fullname = $conn->real_escape_string($_POST['full_name']);
+    $email = $conn->real_escape_string($_POST['email']); // <--- [CHANGED] Capture Email
     $phone = $conn->real_escape_string($_POST['phone']);
     $ic = $conn->real_escape_string($_POST['ic_no']);
     $username = $conn->real_escape_string($_POST['username']);
@@ -38,7 +39,9 @@ if (isset($_POST['update_profile'])) {
         }
     }
 
-    $sql = "UPDATE users SET full_name='$fullname', phone='$phone', ic_no='$ic', username='$username' $avatar_sql WHERE user_id='$user_id'";
+    // [CHANGED] Added email='$email' to SQL query
+    $sql = "UPDATE users SET full_name='$fullname', email='$email', phone='$phone', ic_no='$ic', username='$username' $avatar_sql WHERE user_id='$user_id'";
+
     if ($conn->query($sql)) {
         $msg = "Profile updated successfully!";
         $msg_type = "success";
@@ -242,7 +245,8 @@ if ($role == 'class_teacher') {
     }
 
     .btn-save:hover {
-        background: #1a252f;
+        background: #03830eff;
+        color: white;
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(44, 62, 80, 0.2);
     }
@@ -296,6 +300,13 @@ if ($role == 'class_teacher') {
                                         ID</span>
                                     <span class="info-value"><?php echo $user['teacher_id_no']; ?></span>
                                 </div>
+
+                                <div class="info-list-item">
+                                    <span class="info-label"><i
+                                            class="fas fa-envelope me-2 text-warning"></i>Email</span>
+                                    <span class="info-value"><?php echo $user['email'] ? $user['email'] : '-'; ?></span>
+                                </div>
+
                                 <div class="info-list-item">
                                     <span class="info-label"><i
                                             class="fas fa-user me-2 text-warning"></i>Username</span>
@@ -344,6 +355,14 @@ if ($role == 'class_teacher') {
                                                 <input type="text" name="full_name" class="form-control"
                                                     value="<?php echo $user['full_name']; ?>" required>
                                             </div>
+
+                                            <div class="col-md-6 form-group">
+                                                <label>Email Address</label>
+                                                <input type="email" name="email" class="form-control"
+                                                    value="<?php echo isset($user['email']) ? $user['email'] : ''; ?>"
+                                                    placeholder="name@example.com">
+                                            </div>
+
                                             <div class="col-md-6 form-group">
                                                 <label>Login Username</label>
                                                 <input type="text" name="username" class="form-control"

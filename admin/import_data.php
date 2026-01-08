@@ -59,10 +59,11 @@ if (isset($_POST['import_data'])) {
                 continue;
 
             // ====================================================
-            // TYPE 1: STAFF / USERS (7 Columns)
+            // TYPE 1: STAFF / USERS (8 Columns now)
             // ====================================================
             if ($type == 'users') {
-                if (count($data) < 7)
+                // [CHANGED] Increased count check to 8 to include Email
+                if (count($data) < 8)
                     continue;
 
                 $fname = clean($conn, $data[0]);
@@ -72,14 +73,16 @@ if (isset($_POST['import_data'])) {
                 $staffid = clean($conn, $data[4]);
                 $ic = clean($conn, $data[5]);
                 $phone = clean($conn, $data[6]);
+                $email = clean($conn, $data[7]); // [CHANGED] Capture Email
 
                 if (empty($uname) && strpos($data[1], '@') !== false)
                     $uname = $data[1];
 
                 $chk = $conn->query("SELECT user_id FROM users WHERE username = '$uname'");
                 if ($chk->num_rows == 0) {
-                    $sql = "INSERT INTO users (full_name, username, password, role, teacher_id_no, ic_no, phone) 
-                            VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone')";
+                    // [CHANGED] Added 'email' to INSERT query
+                    $sql = "INSERT INTO users (full_name, username, password, role, teacher_id_no, ic_no, phone, email) 
+                            VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone', '$email')";
                     if ($conn->query($sql))
                         $count++;
                 }
@@ -175,21 +178,21 @@ if (isset($_POST['import_data'])) {
                 $prev = clean($conn, $data[13]);
                 $bcert = clean($conn, $data[14]);
 
-                // 3. Father - FIX: Truncate IC and Phone to 20 chars
+                // 3. Father
                 $fname = isset($data[15]) ? clean($conn, $data[15]) : '';
                 $fic = isset($data[16]) ? substr(clean($conn, $data[16]), 0, 20) : '';
                 $fphone = isset($data[17]) ? substr(clean($conn, $data[17]), 0, 20) : '';
                 $fjob = isset($data[18]) ? clean($conn, $data[18]) : '';
                 $fsal = isset($data[19]) ? floatval(clean($conn, $data[19])) : 0;
 
-                // 4. Mother - FIX: Truncate IC and Phone
+                // 4. Mother
                 $mname = isset($data[20]) ? clean($conn, $data[20]) : '';
                 $mic = isset($data[21]) ? substr(clean($conn, $data[21]), 0, 20) : '';
                 $mphone = isset($data[22]) ? substr(clean($conn, $data[22]), 0, 20) : '';
                 $mjob = isset($data[23]) ? clean($conn, $data[23]) : '';
                 $msal = isset($data[24]) ? floatval(clean($conn, $data[24])) : 0;
 
-                // 5. Guardian - FIX: Truncate IC and Phone
+                // 5. Guardian
                 $gname = isset($data[25]) ? clean($conn, $data[25]) : '';
                 $gic = isset($data[26]) ? substr(clean($conn, $data[26]), 0, 20) : '';
                 $gphone = isset($data[27]) ? substr(clean($conn, $data[27]), 0, 20) : '';
@@ -374,8 +377,8 @@ if (isset($_POST['import_data'])) {
     // Dynamic Guide Content
     const guides = {
         users: `
-        <h6 class="fw-bold text-primary">Staff / Users (7 Cols)</h6>
-        <div class="code-box">FullName, Username, Password, Role, StaffID, IC_No, Phone</div>
+        <h6 class="fw-bold text-primary">Staff / Users (8 Cols)</h6>
+        <div class="code-box">FullName, Username, Password, Role, StaffID, IC_No, Phone, Email</div>
     `,
         classes: `
         <h6 class="fw-bold text-primary">Classes (3 Cols)</h6>

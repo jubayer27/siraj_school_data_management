@@ -1,62 +1,84 @@
 <?php
 session_start();
-include 'config/db.php'; // Adjust path if your db.php is in a subfolder
+date_default_timezone_set('Asia/Dhaka'); // Set to your timezone (or Asia/Kuala_Lumpur)
+include 'config/db.php';
+require 'vendor/autoload.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\SMTP;
 
 $msg = "";
 $msg_type = "";
 
-// Helper: Generate Random Password
-function generateRandomPassword($length = 8)
-{
-    $chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    return substr(str_shuffle($chars), 0, $length);
-}
-
 if (isset($_POST['reset_password'])) {
-    $username = $conn->real_escape_string($_POST['username']);
-    $email = $conn->real_escape_string($_POST['email']);
+    // 1. Sanitize Inputs (Remove accidental spaces)
+    $username = trim($_POST['username']);
+    $email = trim($_POST['email']);
 
-    // 1. Check if user exists
-    $sql = "SELECT user_id, full_name FROM users WHERE username = '$username' AND email = '$email' LIMIT 1";
-    $result = $conn->query($sql);
+    // 2. Check if user exists
+    $stmt = $conn->prepare("SELECT user_id, full_name FROM users WHERE username = ? AND email = ? LIMIT 1");
+    $stmt->bind_param("ss", $username, $email);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     if ($result->num_rows > 0) {
         $user = $result->fetch_assoc();
 
-        // 2. Generate New Password
-        $new_password = generateRandomPassword(8);
-        $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+        // 3. Generate Token
+        $token = bin2hex(random_bytes(50));
+        $expiry = date("Y-m-d H:i:s", strtotime('+1 hour'));
 
-        // 3. Update Database
-        $uid = $user['user_id'];
-        $update = $conn->query("UPDATE users SET password = '$hashed_password' WHERE user_id = $uid");
+        // 4. Store Token
+        $stmt_insert = $conn->prepare("INSERT INTO password_resets (email, token, expiry) VALUES (?, ?, ?)");
+        $stmt_insert->bind_param("sss", $email, $token, $expiry);
 
-        if ($update) {
-            // 4. Send Email
-            $to = $email;
-            $subject = "Password Reset - SIRAJ School Management";
-            $message = "Hello " . $user['full_name'] . ",\n\n";
-            $message .= "Your password has been successfully reset.\n";
-            $message .= "Your New Password is: " . $new_password . "\n\n";
-            $message .= "Please login and change this password immediately.\n";
-            $headers = "From: no-reply@sirajschool.com";
+        if ($stmt_insert->execute()) {
+            // 5. Send Email
+            $mail = new PHPMailer(true);
+            try {
+                $mail->isSMTP();
+                $mail->Host = 'smtp.gmail.com';
+                $mail->SMTPAuth = true;
+                $mail->Username = 'jubayerislam2702@gmail.com'; // Your Email
+                $mail->Password = 'byzr mmis ghhf tokg';         // Your App Password
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                $mail->Port = 587;
 
-            // NOTE: mail() requires a configured mail server (like Sendmail/Postfix) on your server.
-            // On Localhost (XAMPP), this usually fails without specific config.
-            if (@mail($to, $subject, $message, $headers)) {
-                $msg = "A new password has been sent to your email.";
+                $mail->setFrom('no-reply@sirajschool.com', 'SIRAJ School System');
+                $mail->addAddress($email, $user['full_name']);
+
+                // Updated Link to your specific project folder
+                $resetLink = "http://localhost/siraj_school_data_management/reset_password.php?token=$token&email=$email";
+
+                $mail->isHTML(true);
+                $mail->Subject = 'Reset Your Password - SIRAJ School';
+                $mail->Body = "
+                    <div style='font-family: Arial, sans-serif; padding: 20px; color: #333;'>
+                        <h2 style='color: #2c3e50;'>Password Reset Request</h2>
+                        <p>Hello <strong>{$user['full_name']}</strong>,</p>
+                        <p>We received a request to reset your password. Click the button below to create a new one:</p>
+                        <p>
+                            <a href='$resetLink' style='background-color: #FFD700; color: #000; padding: 12px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block;'>Reset Password</a>
+                        </p>
+                        <p style='color: #666; font-size: 12px; margin-top: 20px;'>Link expires in 1 hour. If you didn't ask for this, ignore it.</p>
+                        <p style='font-size: 10px; color: #999;'>Link: $resetLink</p>
+                    </div>
+                ";
+
+                $mail->send();
+                $msg = "Success! We have sent a reset link to <b>$email</b>.";
                 $msg_type = "success";
-            } else {
-                // FALLBACK FOR LOCALHOST TESTING ONLY
-                $msg = "Password reset successful! <br><strong>(Localhost Mode) Your New Password is: " . $new_password . "</strong>";
-                $msg_type = "warning";
+            } catch (Exception $e) {
+                $msg = "Mailer Error: {$mail->ErrorInfo}";
+                $msg_type = "danger";
             }
         } else {
-            $msg = "Database error. Could not reset password.";
+            $msg = "Database Error: Could not save reset token.";
             $msg_type = "danger";
         }
     } else {
-        $msg = "No account found with that Username and Email combination.";
+        $msg = "We could not find an account with that Username and Email.";
         $msg_type = "danger";
     }
 }
@@ -78,7 +100,7 @@ if (isset($_POST['reset_password'])) {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Segoe UI', sans-serif;
         }
 
         .login-card {
@@ -92,8 +114,8 @@ if (isset($_POST['reset_password'])) {
         }
 
         .brand-logo {
-            width: 80px;
-            height: 80px;
+            width: 70px;
+            height: 70px;
             background: #2c3e50;
             border-radius: 50%;
             display: flex;
@@ -103,7 +125,7 @@ if (isset($_POST['reset_password'])) {
         }
 
         .brand-logo img {
-            width: 50px;
+            width: 40px;
         }
 
         .btn-gold {
@@ -119,18 +141,6 @@ if (isset($_POST['reset_password'])) {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(255, 215, 0, 0.3);
         }
-
-        .form-control {
-            padding: 12px;
-            background: #f8f9fa;
-            border: 1px solid #eee;
-        }
-
-        .form-control:focus {
-            border-color: #FFD700;
-            box-shadow: none;
-            background: white;
-        }
     </style>
 </head>
 
@@ -142,7 +152,7 @@ if (isset($_POST['reset_password'])) {
                 <img src="assets/siraj-logo.png" alt="Logo" onerror="this.style.display='none'">
             </div>
             <h4 class="fw-bold text-dark">Forgot Password?</h4>
-            <p class="text-muted small">Enter your details to receive a new password.</p>
+            <p class="text-muted small">Enter your details to receive a reset link.</p>
         </div>
 
         <?php if ($msg): ?>
@@ -154,8 +164,8 @@ if (isset($_POST['reset_password'])) {
                 <label class="form-label small fw-bold text-secondary">Username</label>
                 <div class="input-group">
                     <span class="input-group-text bg-white border-end-0"><i class="fas fa-user text-muted"></i></span>
-                    <input type="text" name="username" class="form-control border-start-0"
-                        placeholder="Enter your username" required>
+                    <input type="text" name="username" class="form-control border-start-0" placeholder="Enter username"
+                        required>
                 </div>
             </div>
 
@@ -164,13 +174,13 @@ if (isset($_POST['reset_password'])) {
                 <div class="input-group">
                     <span class="input-group-text bg-white border-end-0"><i
                             class="fas fa-envelope text-muted"></i></span>
-                    <input type="email" name="email" class="form-control border-start-0" placeholder="Enter your email"
+                    <input type="email" name="email" class="form-control border-start-0" placeholder="Enter email"
                         required>
                 </div>
             </div>
 
             <button type="submit" name="reset_password" class="btn btn-gold mb-3">
-                <i class="fas fa-paper-plane me-2"></i> Send New Password
+                <i class="fas fa-paper-plane me-2"></i> Send Reset Link
             </button>
 
             <div class="text-center">

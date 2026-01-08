@@ -26,6 +26,7 @@ if (isset($_POST['update_user'])) {
     $phone = $_POST['phone'];
     $ic = $_POST['ic_no'];
     $username = $_POST['username'];
+    $email = $_POST['email']; // <--- 1. Capture Email
 
     // Check Duplicate Username
     $dupCheck = $conn->query("SELECT user_id FROM users WHERE username='$username' AND user_id != $uid");
@@ -55,20 +56,19 @@ if (isset($_POST['update_user'])) {
         }
 
         // C. Execute Profile Update
-        $sql = "UPDATE users SET full_name=?, role=?, teacher_id_no=?, phone=?, ic_no=?, username=? $pass_sql $avatar_sql WHERE user_id=?";
+        // <--- 2. Added email=? to SQL
+        $sql = "UPDATE users SET full_name=?, role=?, teacher_id_no=?, phone=?, ic_no=?, username=?, email=? $pass_sql $avatar_sql WHERE user_id=?";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ssssssi", $name, $role, $staff_id, $phone, $ic, $username, $uid);
+        // <--- 3. Updated types to "sssssssi" (added one 's') and added $email variable
+        $stmt->bind_param("sssssssi", $name, $role, $staff_id, $phone, $ic, $username, $email, $uid);
         $stmt->execute();
 
         // ---------------------------------------------------------
         // D. HANDLE SUBJECT ASSIGNMENTS (UPDATED FOR MANY-TO-MANY)
         // ---------------------------------------------------------
         if ($role != 'admin') {
-            // 1. Wipe existing assignments for this teacher in the junction table
-            // This effectively "unchecks" anything not submitted in the form
             $conn->query("DELETE FROM subject_teachers WHERE teacher_id = $uid");
 
-            // 2. Insert new assignments from checked boxes
             if (isset($_POST['assigned_subjects']) && !empty($_POST['assigned_subjects'])) {
                 $stmt_insert = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
                 
@@ -95,7 +95,6 @@ $class_managed = $conn->query("SELECT class_name, year FROM classes WHERE class_
 // 5. FETCH DATA FOR ASSIGNMENT DISPLAY
 // ---------------------------------------------------------
 
-// A. Get ALL Subjects grouped by Class
 $all_subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name
                      FROM subjects s 
                      JOIN classes c ON s.class_id = c.class_id 
@@ -106,7 +105,6 @@ while($row = $all_subjects_res->fetch_assoc()){
     $subjects_by_class[$row['class_name']][] = $row;
 }
 
-// B. Get IDs of subjects currently assigned to THIS user (from junction table)
 $my_subs_res = $conn->query("SELECT subject_id FROM subject_teachers WHERE teacher_id = $uid");
 $my_assigned_ids = [];
 while($row = $my_subs_res->fetch_assoc()){
@@ -149,7 +147,6 @@ while($row = $my_subs_res->fetch_assoc()){
     .input-icon { position: relative; }
     .input-icon i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #aaa; z-index: 5; }
     
-    /* This ensures text starts after the icon */
     .form-control, .form-select { 
         padding-left: 40px !important; 
         border-radius: 8px; 
@@ -244,13 +241,22 @@ while($row = $my_subs_res->fetch_assoc()){
                                             <input type="text" name="ic_no" class="form-control" value="<?php echo $user['ic_no']; ?>">
                                         </div>
                                     </div>
-                                    <div class="col-12">
+                                    
+                                    <div class="col-md-6">
                                         <label class="form-label fw-bold small text-muted">Phone Number</label>
                                         <div class="input-icon">
                                             <i class="fas fa-phone"></i>
                                             <input type="text" name="phone" class="form-control" value="<?php echo $user['phone']; ?>">
                                         </div>
                                     </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold small text-muted">Email Address</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-envelope"></i>
+                                            <input type="email" name="email" class="form-control" value="<?php echo isset($user['email']) ? $user['email'] : ''; ?>" placeholder="user@example.com">
+                                        </div>
+                                    </div>
+                                    
                                 </div>
 
                                 <div class="section-title">Account Access</div>
