@@ -40,8 +40,8 @@ if (isset($_POST['reset_password'])) {
                 $mail->isSMTP();
                 $mail->Host = 'smtp.gmail.com';
                 $mail->SMTPAuth = true;
-                $mail->Username = 'jubayerislam2702@gmail.com'; // Your Email
-                $mail->Password = 'byzr mmis ghhf tokg';         // Your App Password
+                $mail->Username = '*******ail.com'; // Your Email
+                $mail->Password = '******ghhf tokg';         // Your App Password
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                 $mail->Port = 587;
 
