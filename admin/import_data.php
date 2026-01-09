@@ -62,7 +62,6 @@ if (isset($_POST['import_data'])) {
             // TYPE 1: STAFF / USERS (8 Columns now)
             // ====================================================
             if ($type == 'users') {
-                // [CHANGED] Increased count check to 8 to include Email
                 if (count($data) < 8)
                     continue;
 
@@ -73,18 +72,27 @@ if (isset($_POST['import_data'])) {
                 $staffid = clean($conn, $data[4]);
                 $ic = clean($conn, $data[5]);
                 $phone = clean($conn, $data[6]);
-                $email = clean($conn, $data[7]); // [CHANGED] Capture Email
+
+                // [FIXED] Handle Empty Email Logic
+                $email_raw = clean($conn, $data[7]);
+                // If email is empty, set to NULL (no quotes), else wrap in quotes
+                $email_sql = empty($email_raw) ? "NULL" : "'$email_raw'";
 
                 if (empty($uname) && strpos($data[1], '@') !== false)
                     $uname = $data[1];
 
                 $chk = $conn->query("SELECT user_id FROM users WHERE username = '$uname'");
                 if ($chk->num_rows == 0) {
-                    // [CHANGED] Added 'email' to INSERT query
+                    // [FIXED] Removed quotes around $email_sql in VALUES list
                     $sql = "INSERT INTO users (full_name, username, password, role, teacher_id_no, ic_no, phone, email) 
-                            VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone', '$email')";
-                    if ($conn->query($sql))
+                            VALUES ('$fname', '$uname', '$pass', '$role', '$staffid', '$ic', '$phone', $email_sql)";
+
+                    if ($conn->query($sql)) {
                         $count++;
+                    } else {
+                        // Optional: Echo error for debugging specific rows if needed
+                        // echo "Error: " . $conn->error;
+                    }
                 }
             }
 

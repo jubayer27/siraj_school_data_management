@@ -1,4 +1,7 @@
 <?php
+// ENABLE ERROR REPORTING (To fix the blank page issue)
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
 session_start();
 include '../config/db.php';
 include 'includes/header.php';
@@ -14,87 +17,118 @@ if (!isset($_GET['user_id'])) {
     exit;
 }
 
-$uid = $_GET['user_id'];
+$uid = intval($_GET['user_id']); // Sanitize ID
 $success = "";
 $error = "";
 
 // 2. HANDLE FORM SUBMISSION
 if (isset($_POST['update_user'])) {
-    $name = $_POST['full_name'];
-    $role = $_POST['role'];
-    $staff_id = $_POST['teacher_id_no'];
-    $phone = $_POST['phone'];
-    $ic = $_POST['ic_no'];
-    $username = $_POST['username'];
-    $email = $_POST['email']; // <--- 1. Capture Email
+    try {
+        $name = $_POST['full_name'];
+        $role = $_POST['role'];
+        $staff_id = $_POST['teacher_id_no'];
+        $phone = $_POST['phone'];
+        $ic = $_POST['ic_no'];
+        $username = $_POST['username'];
+        $email = $_POST['email']; 
 
-    // Check Duplicate Username
-    $dupCheck = $conn->query("SELECT user_id FROM users WHERE username='$username' AND user_id != $uid");
+        // Check Duplicate Username (excluding current user)
+        $stmt_check = $conn->prepare("SELECT user_id FROM users WHERE username=? AND user_id != ?");
+        $stmt_check->bind_param("si", $username, $uid);
+        $stmt_check->execute();
+        $stmt_check->store_result();
 
-    if ($dupCheck->num_rows > 0) {
-        $error = "Username '$username' is already taken.";
-    } else {
-        // A. Handle Avatar Upload
-        $avatar_sql = "";
-        if (isset($_FILES['avatar']['name']) && $_FILES['avatar']['name'] != "") {
-            $target_dir = "../uploads/";
-            if (!is_dir($target_dir)) mkdir($target_dir);
-
-            $file_ext = strtolower(pathinfo($_FILES["avatar"]["name"], PATHINFO_EXTENSION));
-            $new_filename = uniqid("user_") . "." . $file_ext;
-
-            if (move_uploaded_file($_FILES["avatar"]["tmp_name"], $target_dir . $new_filename)) {
-                $avatar_sql = ", avatar='$new_filename'";
-            }
-        }
-
-        // B. Handle Password Update
-        $pass_sql = "";
-        if (!empty($_POST['password'])) {
-            $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
-            $pass_sql = ", password='$new_pass'";
-        }
-
-        // C. Execute Profile Update
-        // <--- 2. Added email=? to SQL
-        $sql = "UPDATE users SET full_name=?, role=?, teacher_id_no=?, phone=?, ic_no=?, username=?, email=? $pass_sql $avatar_sql WHERE user_id=?";
-        $stmt = $conn->prepare($sql);
-        // <--- 3. Updated types to "sssssssi" (added one 's') and added $email variable
-        $stmt->bind_param("sssssssi", $name, $role, $staff_id, $phone, $ic, $username, $email, $uid);
-        $stmt->execute();
-
-        // ---------------------------------------------------------
-        // D. HANDLE SUBJECT ASSIGNMENTS (UPDATED FOR MANY-TO-MANY)
-        // ---------------------------------------------------------
-        if ($role != 'admin') {
-            $conn->query("DELETE FROM subject_teachers WHERE teacher_id = $uid");
-
-            if (isset($_POST['assigned_subjects']) && !empty($_POST['assigned_subjects'])) {
-                $stmt_insert = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
+        if ($stmt_check->num_rows > 0) {
+            $error = "Username '$username' is already taken.";
+        } else {
+            // A. Handle Avatar Upload
+            $avatar_sql = "";
+            if (isset($_FILES['avatar']['name']) && $_FILES['avatar']['name'] != "") {
+                $target_dir = "../uploads/";
                 
-                foreach ($_POST['assigned_subjects'] as $sub_id) {
-                    $stmt_insert->bind_param("ii", $sub_id, $uid);
-                    $stmt_insert->execute();
+                // Check folder existence
+                if (!is_dir($target_dir)) {
+                    mkdir($target_dir, 0755, true);
+                }
+
+                $file_ext = strtolower(pathinfo($_FILES["avatar"]["name"], PATHINFO_EXTENSION));
+                $allowed_ext = ['jpg', 'jpeg', 'png'];
+
+                if(in_array($file_ext, $allowed_ext)) {
+                    $new_filename = uniqid("user_") . "." . $file_ext;
+                    if (move_uploaded_file($_FILES["avatar"]["tmp_name"], $target_dir . $new_filename)) {
+                        $avatar_sql = ", avatar='$new_filename'";
+                    } else {
+                        $error = "Failed to upload image. Check folder permissions.";
+                    }
+                } else {
+                    $error = "Invalid file type. Only JPG, JPEG, and PNG allowed.";
                 }
             }
-        }
 
-        $success = "User profile and subject assignments updated successfully!";
-        echo "<script>setTimeout(function(){ window.location.href = window.location.href; }, 1500);</script>";
+            // B. Handle Password Update
+            $pass_sql = "";
+            if (!empty($_POST['password'])) {
+                $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
+                $pass_sql = ", password='$new_pass'";
+            }
+
+            // C. Execute Profile Update if no upload errors
+            if(empty($error)) {
+                // We construct the query safely. 
+                // Note: password and avatar are injected but they are generated/hashed internally (safe).
+                $sql = "UPDATE users SET full_name=?, role=?, teacher_id_no=?, phone=?, ic_no=?, username=?, email=? $pass_sql $avatar_sql WHERE user_id=?";
+                
+                $stmt = $conn->prepare($sql);
+                
+                if (!$stmt) {
+                    throw new Exception("Database Prepare Error: " . $conn->error);
+                }
+
+                // Bind parameters: s=string (7 times), i=integer (1 time)
+                $stmt->bind_param("sssssssi", $name, $role, $staff_id, $phone, $ic, $username, $email, $uid);
+                $stmt->execute();
+
+                // D. Handle Subject Assignments
+                if ($role != 'admin') {
+                    // Clear existing
+                    $conn->query("DELETE FROM subject_teachers WHERE teacher_id = $uid");
+
+                    // Add new
+                    if (isset($_POST['assigned_subjects']) && !empty($_POST['assigned_subjects'])) {
+                        $stmt_insert = $conn->prepare("INSERT INTO subject_teachers (subject_id, teacher_id) VALUES (?, ?)");
+                        foreach ($_POST['assigned_subjects'] as $sub_id) {
+                            $stmt_insert->bind_param("ii", $sub_id, $uid);
+                            $stmt_insert->execute();
+                        }
+                    }
+                }
+
+                $success = "User profile updated successfully!";
+                
+                // Refresh cleanly to show changes
+                echo "<script>
+                    setTimeout(function(){ 
+                        window.location.href = 'edit_user.php?user_id=$uid'; 
+                    }, 1000);
+                </script>";
+            }
+        }
+    } catch (Exception $e) {
+        // This catches the "Blank Page" error and shows it
+        $error = "System Error: " . $e->getMessage();
     }
 }
 
 // 3. FETCH USER DATA
-$user = $conn->query("SELECT * FROM users WHERE user_id = $uid")->fetch_assoc();
-if (!$user) die("User not found.");
+$user_query = $conn->query("SELECT * FROM users WHERE user_id = $uid");
+if ($user_query->num_rows == 0) die("User not found.");
+$user = $user_query->fetch_assoc();
 
 // 4. FETCH CONTEXT (Class Mentorship)
 $class_managed = $conn->query("SELECT class_name, year FROM classes WHERE class_teacher_id = $uid")->fetch_assoc();
 
-// ---------------------------------------------------------
 // 5. FETCH DATA FOR ASSIGNMENT DISPLAY
-// ---------------------------------------------------------
-
 $all_subjects_sql = "SELECT s.subject_id, s.subject_name, s.subject_code, c.class_name
                      FROM subjects s 
                      JOIN classes c ON s.class_id = c.class_id 
@@ -165,7 +199,7 @@ while($row = $my_subs_res->fetch_assoc()){
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
                     <h2 class="fw-bold text-dark mb-0">Edit User Profile</h2>
-                    <p class="text-secondary mb-0">Managing: <strong><?php echo $user['full_name']; ?></strong></p>
+                    <p class="text-secondary mb-0">Managing: <strong><?php echo htmlspecialchars($user['full_name']); ?></strong></p>
                 </div>
                 <a href="manage_users.php" class="btn btn-light border shadow-sm">
                     <i class="fas fa-arrow-left me-2"></i> Back to Directory
@@ -186,7 +220,12 @@ while($row = $my_subs_res->fetch_assoc()){
                         <div class="card edit-card text-center p-4">
                             <div class="avatar-upload">
                                 <div class="avatar-preview">
-                                    <?php $img = $user['avatar'] ? "../uploads/" . $user['avatar'] : "https://ui-avatars.com/api/?name=" . $user['full_name'] . "&background=random"; ?>
+                                    <?php 
+                                    $img_path = "../uploads/" . $user['avatar'];
+                                    $img = (!empty($user['avatar']) && file_exists($img_path)) 
+                                        ? $img_path 
+                                        : "https://ui-avatars.com/api/?name=" . urlencode($user['full_name']) . "&background=random"; 
+                                    ?>
                                     <img id="imagePreview" src="<?php echo $img; ?>">
                                 </div>
                                 <div class="avatar-edit">
@@ -194,7 +233,7 @@ while($row = $my_subs_res->fetch_assoc()){
                                     <label for="imageUpload"><i class="fas fa-camera"></i></label>
                                 </div>
                             </div>
-                            <h5 class="fw-bold mb-1"><?php echo $user['full_name']; ?></h5>
+                            <h5 class="fw-bold mb-1"><?php echo htmlspecialchars($user['full_name']); ?></h5>
                             <span class="role-badge"><?php echo strtoupper(str_replace('_', ' ', $user['role'])); ?></span>
 
                             <hr class="my-4">
@@ -204,7 +243,7 @@ while($row = $my_subs_res->fetch_assoc()){
                                     <h6 class="fw-bold text-muted small text-uppercase mb-2"><i class="fas fa-crown me-1 text-warning"></i> Class Mentor</h6>
                                     <div class="p-2 bg-light rounded border border-warning">
                                         <?php if($class_managed): ?>
-                                            <div class="fw-bold text-dark"><?php echo $class_managed['class_name']; ?></div>
+                                            <div class="fw-bold text-dark"><?php echo htmlspecialchars($class_managed['class_name']); ?></div>
                                             <small class="text-muted">Year <?php echo $class_managed['year']; ?></small>
                                         <?php else: ?>
                                             <span class="text-muted small">No class assigned.</span>
@@ -224,21 +263,21 @@ while($row = $my_subs_res->fetch_assoc()){
                                         <label class="form-label fw-bold small text-muted">Full Name</label>
                                         <div class="input-icon">
                                             <i class="fas fa-user"></i>
-                                            <input type="text" name="full_name" class="form-control" value="<?php echo $user['full_name']; ?>" required>
+                                            <input type="text" name="full_name" class="form-control" value="<?php echo htmlspecialchars($user['full_name']); ?>" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label fw-bold small text-muted">Staff ID</label>
                                         <div class="input-icon">
                                             <i class="fas fa-id-badge"></i>
-                                            <input type="text" name="teacher_id_no" class="form-control" value="<?php echo $user['teacher_id_no']; ?>">
+                                            <input type="text" name="teacher_id_no" class="form-control" value="<?php echo htmlspecialchars($user['teacher_id_no']); ?>">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label fw-bold small text-muted">IC Number</label>
                                         <div class="input-icon">
                                             <i class="fas fa-id-card"></i>
-                                            <input type="text" name="ic_no" class="form-control" value="<?php echo $user['ic_no']; ?>">
+                                            <input type="text" name="ic_no" class="form-control" value="<?php echo htmlspecialchars($user['ic_no']); ?>">
                                         </div>
                                     </div>
                                     
@@ -246,14 +285,14 @@ while($row = $my_subs_res->fetch_assoc()){
                                         <label class="form-label fw-bold small text-muted">Phone Number</label>
                                         <div class="input-icon">
                                             <i class="fas fa-phone"></i>
-                                            <input type="text" name="phone" class="form-control" value="<?php echo $user['phone']; ?>">
+                                            <input type="text" name="phone" class="form-control" value="<?php echo htmlspecialchars($user['phone']); ?>">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label fw-bold small text-muted">Email Address</label>
                                         <div class="input-icon">
                                             <i class="fas fa-envelope"></i>
-                                            <input type="email" name="email" class="form-control" value="<?php echo isset($user['email']) ? $user['email'] : ''; ?>" placeholder="user@example.com">
+                                            <input type="email" name="email" class="form-control" value="<?php echo isset($user['email']) ? htmlspecialchars($user['email']) : ''; ?>" placeholder="user@example.com">
                                         </div>
                                     </div>
                                     
@@ -276,7 +315,7 @@ while($row = $my_subs_res->fetch_assoc()){
                                         <label class="form-label fw-bold small text-muted">Username</label>
                                         <div class="input-icon">
                                             <i class="fas fa-sign-in-alt"></i>
-                                            <input type="text" name="username" class="form-control" value="<?php echo $user['username']; ?>" required>
+                                            <input type="text" name="username" class="form-control" value="<?php echo htmlspecialchars($user['username']); ?>" required>
                                         </div>
                                     </div>
                                     <div class="col-12">
@@ -306,25 +345,25 @@ while($row = $my_subs_res->fetch_assoc()){
                                     else:
                                         foreach($subjects_by_class as $class_name => $subs): 
                                     ?>
-                                        <div class="class-group-header"><?php echo $class_name; ?></div>
-                                        <?php foreach($subs as $s): 
-                                            // CHECK: Is this subject in the user's assigned list?
-                                            $is_assigned = in_array($s['subject_id'], $my_assigned_ids);
-                                        ?>
-                                        <div class="subject-item">
-                                            <div class="form-check m-0">
-                                                <input class="form-check-input" type="checkbox" 
-                                                       name="assigned_subjects[]" 
-                                                       value="<?php echo $s['subject_id']; ?>" 
-                                                       id="sub_<?php echo $s['subject_id']; ?>"
-                                                       <?php echo $is_assigned ? 'checked' : ''; ?>>
-                                                <label class="form-check-label small" for="sub_<?php echo $s['subject_id']; ?>">
-                                                    <strong><?php echo $s['subject_name']; ?></strong>
-                                                    <span class="text-muted" style="font-size:0.75rem;">(<?php echo $s['subject_code']; ?>)</span>
-                                                </label>
+                                            <div class="class-group-header"><?php echo htmlspecialchars($class_name); ?></div>
+                                            <?php foreach($subs as $s): 
+                                                // CHECK: Is this subject in the user's assigned list?
+                                                $is_assigned = in_array($s['subject_id'], $my_assigned_ids);
+                                            ?>
+                                            <div class="subject-item">
+                                                <div class="form-check m-0">
+                                                    <input class="form-check-input" type="checkbox" 
+                                                           name="assigned_subjects[]" 
+                                                           value="<?php echo $s['subject_id']; ?>" 
+                                                           id="sub_<?php echo $s['subject_id']; ?>"
+                                                           <?php echo $is_assigned ? 'checked' : ''; ?>>
+                                                    <label class="form-check-label small" for="sub_<?php echo $s['subject_id']; ?>">
+                                                        <strong><?php echo htmlspecialchars($s['subject_name']); ?></strong>
+                                                        <span class="text-muted" style="font-size:0.75rem;">(<?php echo htmlspecialchars($s['subject_code']); ?>)</span>
+                                                    </label>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <?php endforeach; ?>
+                                            <?php endforeach; ?>
                                     <?php endforeach; endif; ?>
                                 </div>
                             </div>
